@@ -33,18 +33,6 @@ interface OrderDetail {
   status: string;
 }
 
-interface CustomerInfo {
-  id: string;
-  nama: string;
-  foto_url: string | null;
-}
-
-interface DriverInfo {
-  id: string;
-  nama: string;
-  foto_url: string | null;
-}
-
 const HalamanChat_Food_Driver: React.FC = () => {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -74,6 +62,9 @@ const HalamanChat_Food_Driver: React.FC = () => {
     foto_url: null
   });
 
+  // State untuk tracking data readiness
+  const [idsReady, setIdsReady] = React.useState(false);
+
   const scrollViewRef = React.useRef<ScrollView>(null);
 
   // 🔑 Fungsi untuk mengambil UUID driver dari tabel driver berdasarkan NIM
@@ -96,7 +87,6 @@ const HalamanChat_Food_Driver: React.FC = () => {
         const driverUuid = data.id;
         console.log('✅ UUID driver ditemukan:', driverUuid);
         
-        // 💾 Auto-save ke AsyncStorage untuk penggunaan berikutnya
         await AsyncStorage.setItem('driver_id', driverUuid);
         await AsyncStorage.setItem('driver_uuid', driverUuid);
         console.log('💾 Driver UUID disimpan ke AsyncStorage');
@@ -132,7 +122,6 @@ const HalamanChat_Food_Driver: React.FC = () => {
         const customerUuid = data.id;
         console.log('✅ UUID customer ditemukan:', customerUuid);
         
-        // 💾 Auto-save ke AsyncStorage
         await AsyncStorage.setItem('customer_id', customerUuid);
         await AsyncStorage.setItem('customer_uuid', customerUuid);
         console.log('💾 Customer UUID disimpan ke AsyncStorage');
@@ -150,13 +139,11 @@ const HalamanChat_Food_Driver: React.FC = () => {
 
   // 🔄 Fungsi untuk resolve ID (NIM ke UUID jika diperlukan)
   const resolveToUuid = async (id: string, role: 'customer' | 'driver'): Promise<string> => {
-    // Cek apakah sudah UUID (mengandung dash)
     if (id.includes('-')) {
       console.log(`✅ ${role} ID sudah dalam format UUID:`, id);
       return id;
     }
 
-    // Jika bukan UUID, konversi dari NIM
     console.log(`🔄 ${role} ID adalah NIM, converting ke UUID...`);
     const uuid = role === 'driver' 
       ? await getDriverUuidFromNim(id)
@@ -164,13 +151,13 @@ const HalamanChat_Food_Driver: React.FC = () => {
     
     if (!uuid) {
       console.warn(`⚠️ Gagal konversi ${role} NIM ke UUID:`, id);
-      return id; // fallback
+      return id;
     }
 
     return uuid;
   };
 
-  // 🔑 Resolve driver UUID from multiple sources (auth/session/asyncstorage/nim)
+  // 🔑 Resolve driver UUID from multiple sources
   const resolveDriverUuid = async (): Promise<string | null> => {
     try {
       // 1. try supabase auth getUser
@@ -192,16 +179,13 @@ const HalamanChat_Food_Driver: React.FC = () => {
       for (const k of keys) {
         const v = await AsyncStorage.getItem(k);
         if (v) {
-          // if looks like uuid -> return, else treat as nim and lookup
           const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           if (uuidRegex.test(v)) return v;
-          // else v is likely NIM -> lookup
           const found = await getDriverUuidFromNim(v);
           if (found) return found;
         }
       }
 
-      // 4. no driver id found
       return null;
     } catch (err) {
       console.error('❌ resolveDriverUuid error', err);
@@ -209,87 +193,11 @@ const HalamanChat_Food_Driver: React.FC = () => {
     }
   };
 
-  // 🔔 If this page is opened with param to "ambil" the order, perform update: set id_driver + status 'on progress'
-  React.useEffect(() => {
-    const tryAutoTake = async () => {
-      try {
-        const shouldTake = String(params?.take || params?.ambil || params?.action || '').toLowerCase() === 'true' ||
-          String(params?.from || '').toLowerCase() === 'ambil';
-        if (!shouldTake) return;
-        if (!orderId) {
-          console.warn('⚠️ Auto-take requested but orderId not set yet');
-          return;
-        }
-
-        // resolve driver uuid
-        const driverUuid = await resolveDriverUuid();
-        if (!driverUuid) {
-          Alert.alert('Gagal', 'Driver ID tidak ditemukan. Silakan login ulang.');
-          console.warn('Driver UUID not resolved for auto-take');
-          return;
-        }
-
-        console.log('🔧 Auto-taking order', orderId, 'with driver', driverUuid);
-
-        const { data, error } = await supabase
-          .from('scoot_food')
-          .update({ id_driver: driverUuid, status: 'on progress' })
-          .eq('id_scoot_food', orderId)
-          .is('id_driver', null)
-          .select();
-
-        if (error) {
-          console.warn('Gagal update scoot_food on take:', error);
-          Alert.alert('Gagal mengambil pesanan', error.message || String(error));
-        } else {
-          // refresh local orderDetail & UI
-          if (Array.isArray(data) && data.length > 0) {
-            const updated = data[0];
-            setOrderDetail(prev => ({ ...(prev || {}), id_driver: updated.id_driver, status: updated.status } as OrderDetail));
-            setDriverId(String(updated.id_driver));
-            await AsyncStorage.setItem('driver_id', String(updated.id_driver));
-            console.log('✅ Order updated and UI refreshed');
-          } else {
-            // maybe supabase returned single object
-            if (data && (data as any).id_scoot_food) {
-              const updated = data as any;
-              setOrderDetail(prev => ({ ...(prev || {}), id_driver: updated.id_driver, status: updated.status } as OrderDetail));
-              setDriverId(String(updated.id_driver));
-              await AsyncStorage.setItem('driver_id', String(updated.id_driver));
-              console.log('✅ Order updated and UI refreshed (single)');
-            } else {
-              console.log('ℹ️ Update succeeded but no returned row; refreshing by fetching order detail');
-              const { data: refetch, error: refError } = await supabase
-                .from('scoot_food')
-                .select('id_scoot_food, id_customer, id_driver, lokasi_resto, lokasi_tujuan, detail_pesanan, ongkir, status')
-                .eq('id_scoot_food', orderId)
-                .maybeSingle();
-              if (!refError && refetch) {
-                setOrderDetail(refetch);
-                if (refetch.id_driver) {
-                  setDriverId(refetch.id_driver);
-                  await AsyncStorage.setItem('driver_id', refetch.id_driver);
-                }
-                console.log('✅ Refetched order detail after update');
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.error('❌ auto-take error', err);
-      }
-    };
-
-    tryAutoTake();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params, orderId]);
-
   // 📱 Fungsi untuk mendapatkan Driver ID dari berbagai sumber
   const getDriverIdFromStorage = async (): Promise<string | null> => {
     try {
       console.log('🔍 Mencari Driver ID dari AsyncStorage...');
       
-      // Coba berbagai key yang mungkin digunakan
       const possibleKeys = [
         'driver_id',
         'driver_uuid', 
@@ -317,13 +225,13 @@ const HalamanChat_Food_Driver: React.FC = () => {
     }
   };
 
-  // 🔐 Step 1: Detect user role & resolve IDs (dengan AsyncStorage)
+  // 🔐 Step 1: Detect user role & resolve IDs
   React.useEffect(() => {
     const detectUserRole = async () => {
       try {
         let userId: string | undefined;
 
-        // 1️⃣ Coba dari AsyncStorage dulu (lebih cepat)
+        // 1️⃣ Coba dari AsyncStorage dulu
         const storedDriverId = await getDriverIdFromStorage();
         if (storedDriverId) {
           userId = storedDriverId;
@@ -337,7 +245,6 @@ const HalamanChat_Food_Driver: React.FC = () => {
             userId = data?.user?.id;
             if (userId) {
               console.log('🔐 User ID dari Supabase Auth (getUser):', userId);
-              // Simpan ke AsyncStorage untuk next time
               await AsyncStorage.setItem('driver_id', userId);
             }
           } catch (e) {
@@ -360,14 +267,12 @@ const HalamanChat_Food_Driver: React.FC = () => {
         // 3️⃣ Resolve ke UUID jika perlu
         let resolvedUserId = userId;
         if (!userId.includes('-')) {
-          // Coba sebagai driver dulu
           let uuid = await getDriverUuidFromNim(userId);
           if (uuid) {
             resolvedUserId = uuid;
             setCurrentUser('driver');
             console.log('✅ User is DRIVER (resolved from NIM)');
           } else {
-            // Coba sebagai customer
             uuid = await getCustomerUuidFromNim(userId);
             if (uuid) {
               resolvedUserId = uuid;
@@ -440,7 +345,6 @@ const HalamanChat_Food_Driver: React.FC = () => {
         setDriverId(resolvedDrvId);
         console.log('🚗 Driver ID resolved:', resolvedDrvId);
         
-        // Simpan ke AsyncStorage
         await AsyncStorage.setItem('driver_id', resolvedDrvId);
       }
     };
@@ -470,15 +374,26 @@ const HalamanChat_Food_Driver: React.FC = () => {
         if (data) {
           setOrderDetail(data);
           
-          // Update IDs dari order jika belum ada (sudah dalam format UUID)
+          // Update IDs dan check readiness
+          let newCustomerId = customerId;
+          let newDriverId = driverId;
+          
           if (!customerId && data.id_customer) {
+            newCustomerId = data.id_customer;
             setCustomerId(data.id_customer);
             await AsyncStorage.setItem('customer_id', data.id_customer);
           }
           
           if (!driverId && data.id_driver) {
+            newDriverId = data.id_driver;
             setDriverId(data.id_driver);
             await AsyncStorage.setItem('driver_id', data.id_driver);
+          }
+          
+          // Check if both IDs are ready
+          if (newCustomerId && newDriverId) {
+            console.log('✅ Both IDs ready after order fetch:', { newCustomerId, newDriverId });
+            setIdsReady(true);
           }
           
           console.log('✅ Order Detail loaded:', data);
@@ -495,53 +410,152 @@ const HalamanChat_Food_Driver: React.FC = () => {
     fetchOrderDetail();
   }, [orderId]);
 
-  // 👤 Step 4: Fetch Counterpart Info (Customer jika driver login, Driver jika customer login)
+  // 🔔 Auto-take order if requested
+  React.useEffect(() => {
+    const tryAutoTake = async () => {
+      try {
+        const shouldTake = String(params?.take || params?.ambil || params?.action || '').toLowerCase() === 'true' ||
+          String(params?.from || '').toLowerCase() === 'ambil';
+        if (!shouldTake) return;
+        if (!orderId) {
+          console.warn('⚠️ Auto-take requested but orderId not set yet');
+          return;
+        }
+
+        const driverUuid = await resolveDriverUuid();
+        if (!driverUuid) {
+          Alert.alert('Gagal', 'Driver ID tidak ditemukan. Silakan login ulang.');
+          console.warn('Driver UUID not resolved for auto-take');
+          return;
+        }
+
+        console.log('🔧 Auto-taking order', orderId, 'with driver', driverUuid);
+
+        const { data, error } = await supabase
+          .from('scoot_food')
+          .update({ id_driver: driverUuid, status: 'on progress' })
+          .eq('id_scoot_food', orderId)
+          .is('id_driver', null)
+          .select();
+
+        if (error) {
+          console.warn('Gagal update scoot_food on take:', error);
+          Alert.alert('Gagal mengambil pesanan', error.message || String(error));
+        } else {
+          if (Array.isArray(data) && data.length > 0) {
+            const updated = data[0];
+            setOrderDetail(prev => ({ ...(prev || {}), id_driver: updated.id_driver, status: updated.status } as OrderDetail));
+            setDriverId(String(updated.id_driver));
+            await AsyncStorage.setItem('driver_id', String(updated.id_driver));
+            console.log('✅ Order updated and UI refreshed');
+          } else {
+            if (data && (data as any).id_scoot_food) {
+              const updated = data as any;
+              setOrderDetail(prev => ({ ...(prev || {}), id_driver: updated.id_driver, status: updated.status } as OrderDetail));
+              setDriverId(String(updated.id_driver));
+              await AsyncStorage.setItem('driver_id', String(updated.id_driver));
+              console.log('✅ Order updated and UI refreshed (single)');
+            } else {
+              console.log('ℹ️ Update succeeded but no returned row; refreshing by fetching order detail');
+              const { data: refetch, error: refError } = await supabase
+                .from('scoot_food')
+                .select('id_scoot_food, id_customer, id_driver, lokasi_resto, lokasi_tujuan, detail_pesanan, ongkir, status')
+                .eq('id_scoot_food', orderId)
+                .maybeSingle();
+              if (!refError && refetch) {
+                setOrderDetail(refetch);
+                if (refetch.id_driver) {
+                  setDriverId(refetch.id_driver);
+                  await AsyncStorage.setItem('driver_id', refetch.id_driver);
+                }
+                console.log('✅ Refetched order detail after update');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('❌ auto-take error', err);
+      }
+    };
+
+    tryAutoTake();
+  }, [params, orderId]);
+
+  // 🔧 FIXED: Fetch counterpart info - HANYA query kolom 'nama'
   React.useEffect(() => {
     const fetchCounterpartInfo = async () => {
+      // Wait until both customerId and driverId are available
+      if (!customerId || !driverId) {
+        console.log('⏳ Waiting for both IDs...', { customerId, driverId });
+        return;
+      }
+
+      // Mark as ready
+      if (!idsReady) {
+        console.log('✅ Both IDs now available, marking ready');
+        setIdsReady(true);
+      }
+
       try {
+        console.log('👤 Fetching counterpart info...', { 
+          currentUser, 
+          customerId, 
+          driverId 
+        });
+
         if (currentUser === 'driver' && customerId) {
           console.log('👤 Fetching customer info for ID:', customerId);
           
+          // ✅ FIXED: Hanya query kolom 'nama', tidak query foto_url
           const { data, error } = await supabase
             .from('customer')
-            .select('nama, foto_url')
+            .select('nama')
             .eq('id', customerId)
             .maybeSingle();
 
           if (error) {
             console.warn('⚠️ Error fetching customer info:', error);
-          }
-
-          if (data) {
+            setCounterpartInfo({ nama: 'Customer', foto_url: null });
+          } else if (data) {
             setCounterpartInfo({
               nama: data.nama || 'Customer',
-              foto_url: data.foto_url || null
+              foto_url: null // Set null karena tidak ada kolom foto_url
             });
-            console.log('✅ Customer Info loaded:', data);
+            console.log('✅ Customer Info loaded:', data.nama);
+          } else {
+            console.warn('⚠️ No customer data found');
+            setCounterpartInfo({ nama: 'Customer', foto_url: null });
           }
         } else if (currentUser === 'customer' && driverId) {
           console.log('👤 Fetching driver info for ID:', driverId);
           
+          // ✅ FIXED: Hanya query kolom 'nama', tidak query foto_url
           const { data, error } = await supabase
             .from('driver')
-            .select('nama, foto_url')
+            .select('nama')
             .eq('id', driverId)
             .maybeSingle();
 
           if (error) {
             console.warn('⚠️ Error fetching driver info:', error);
-          }
-
-          if (data) {
+            setCounterpartInfo({ nama: 'Driver', foto_url: null });
+          } else if (data) {
             setCounterpartInfo({
               nama: data.nama || 'Driver',
-              foto_url: data.foto_url || null
+              foto_url: null // Set null karena tidak ada kolom foto_url
             });
-            console.log('✅ Driver Info loaded:', data);
+            console.log('✅ Driver Info loaded:', data.nama);
+          } else {
+            console.warn('⚠️ No driver data found');
+            setCounterpartInfo({ nama: 'Driver', foto_url: null });
           }
         }
       } catch (err) {
         console.error('❌ Error fetching counterpart info:', err);
+        setCounterpartInfo({
+          nama: currentUser === 'driver' ? 'Customer' : 'Driver',
+          foto_url: null
+        });
       }
     };
 
@@ -550,12 +564,9 @@ const HalamanChat_Food_Driver: React.FC = () => {
 
   // 💬 Step 5: Load Chat History
   const loadMessages = React.useCallback(async () => {
+    if (!orderId) return;
+    
     try {
-      if (!orderId) {
-        console.log('⚠️ Cannot load messages: orderId is empty');
-        return;
-      }
-
       console.log('💬 Loading messages for order:', orderId);
 
       const { data, error } = await supabase
@@ -564,36 +575,30 @@ const HalamanChat_Food_Driver: React.FC = () => {
         .eq('id_scoot_food', orderId)
         .order('timestamp', { ascending: true });
 
-      if (error) {
-        console.error('❌ Error loading messages:', error);
-        throw error;
-      }
+      if (error) throw error;
 
-      if (data) {
-        const formattedMessages: Message[] = [];
-        
-        data.forEach((row: any) => {
-          if (row.teks_customer) {
-            formattedMessages.push({
-              id: `${row.id_chat}-cust`,
-              text: row.teks_customer,
-              sender: 'customer',
-              timestamp: formatTime(row.timestamp)
-            });
-          }
-          if (row.teks_driver) {
-            formattedMessages.push({
-              id: `${row.id_chat}-drv`,
-              text: row.teks_driver,
-              sender: 'driver',
-              timestamp: formatTime(row.timestamp)
-            });
-          }
-        });
+      const formatted: Message[] = [];
+      (data || []).forEach((row: any) => {
+        if (row.teks_customer) {
+          formatted.push({
+            id: `${row.id_chat}-cust`,
+            text: row.teks_customer,
+            sender: 'customer',
+            timestamp: formatTime(row.timestamp)
+          });
+        }
+        if (row.teks_driver) {
+          formatted.push({
+            id: `${row.id_chat}-drv`,
+            text: row.teks_driver,
+            sender: 'driver',
+            timestamp: formatTime(row.timestamp)
+          });
+        }
+      });
 
-        setMessages(formattedMessages);
-        console.log('✅ Messages loaded:', formattedMessages.length);
-      }
+      setMessages(formatted);
+      console.log('✅ Messages loaded:', formatted.length);
     } catch (err) {
       console.error('❌ Error loading messages:', err);
     }
@@ -659,88 +664,44 @@ const HalamanChat_Food_Driver: React.FC = () => {
 
   // 📨 Step 7: Send Message
   const handleSendMessage = async () => {
-    const messageText = inputText.trim();
-    
-    if (!messageText) {
-      console.log('⚠️ Empty message, not sending');
-      return;
-    }
-
+    const text = inputText.trim();
+    if (!text) return;
     if (!orderId) {
       Alert.alert('Error', 'Order ID tidak ditemukan');
       return;
     }
 
+    setIsSending(true);
+    setInputText('');
+
     try {
-      setIsSending(true);
-      setInputText(''); // Clear input immediately for better UX
-
-      // Resolve customer & driver IDs
-      let resolvedCustomerId = customerId;
-      let resolvedDriverId = driverId;
-
-      // Fallback ke orderDetail jika belum ada
-      if (!resolvedCustomerId && orderDetail?.id_customer) {
-        resolvedCustomerId = orderDetail.id_customer;
-      }
-
-      if (!resolvedDriverId && orderDetail?.id_driver) {
-        resolvedDriverId = orderDetail.id_driver;
-      }
-
-      // Validasi UUID format - konversi jika perlu
-      if (resolvedCustomerId && !resolvedCustomerId.includes('-')) {
-        console.log('🔄 Converting customer ID to UUID...');
-        resolvedCustomerId = await resolveToUuid(resolvedCustomerId, 'customer');
-      }
-
-      if (resolvedDriverId && !resolvedDriverId.includes('-')) {
-        console.log('🔄 Converting driver ID to UUID...');
-        resolvedDriverId = await resolveToUuid(resolvedDriverId, 'driver');
-      }
-
-      // Final validation
-      if (!resolvedCustomerId || !resolvedDriverId) {
-        Alert.alert('Error', 'Data customer atau driver tidak lengkap. Silakan refresh halaman.');
-        console.warn('⚠️ Missing IDs - Customer:', resolvedCustomerId, 'Driver:', resolvedDriverId);
-        setInputText(messageText); // Restore message
-        return;
-      }
-
-      const insertPayload: any = {
+      const payload: any = {
         id_scoot_food: orderId,
-        id_customer: resolvedCustomerId,
-        id_driver: resolvedDriverId,
         timestamp: new Date().toISOString()
       };
 
-      // Tentukan apakah pesan dari customer atau driver
       if (currentUser === 'driver') {
-        insertPayload.teks_driver = messageText;
-        insertPayload.teks_customer = null;
+        payload.teks_driver = text;
+        payload.teks_customer = null;
       } else {
-        insertPayload.teks_customer = messageText;
-        insertPayload.teks_driver = null;
+        payload.teks_customer = text;
+        payload.teks_driver = null;
       }
 
-      console.log('📤 Sending message:', insertPayload);
+      console.log('📤 Sending message:', payload);
 
       const { error } = await supabase
         .from('chat_food')
-        .insert([insertPayload]);
+        .insert([payload]);
 
-      if (error) {
-        console.error('❌ Error sending message:', error);
-        throw error;
-      }
+      if (error) throw error;
 
       console.log('✅ Message sent successfully');
-      // Message akan otomatis muncul via realtime subscription
-      
+
     } catch (err) {
       console.error('❌ Error sending message:', err);
-      Alert.alert('Error', 'Gagal mengirim pesan. Silakan coba lagi.');
-      setInputText(messageText); // Restore message jika gagal
+      Alert.alert('Error', 'Gagal mengirim pesan');
+      setInputText(text);
     } finally {
       setIsSending(false);
     }
@@ -792,11 +753,7 @@ const HalamanChat_Food_Driver: React.FC = () => {
 
             <Image 
               style={styles.counterpartIcon} 
-              source={
-                counterpartInfo.foto_url
-                  ? { uri: counterpartInfo.foto_url }
-                  : require('../../../../assets/images/Passenger.png')
-              }
+              source={require('../../../../assets/images/Passenger.png')}
               resizeMode="cover" 
             />
             
@@ -844,7 +801,7 @@ const HalamanChat_Food_Driver: React.FC = () => {
           >
             {messages.length === 0 ? (
               <View style={styles.emptyState}>
-                <Text style={styles.emptyText}>💬</Text>
+                <Text style={styles.emptyText}></Text>
                 <Text style={styles.emptyText}>Belum ada pesan</Text>
                 <Text style={[styles.emptyText, { fontSize: 12, marginTop: 8 }]}>
                   Mulai percakapan dengan {currentUser === 'driver' ? 'customer' : 'driver'}

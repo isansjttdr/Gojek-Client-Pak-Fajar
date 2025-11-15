@@ -1,500 +1,746 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import * as React from "react";
-import type { ScrollView as ScrollViewType } from "react-native";
-import { Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../../../hooks/supabaseClient";
 
 interface Message {
-  id: number;
-  sender: 'customer' | 'driver';
+  id: string;
   text: string;
+  sender: 'customer' | 'driver';
   timestamp: string;
 }
 
-interface ChatMessage {
-  id_chat: number;
-  id_scoot_ride?: number;
-  id_scoot_food?: number;
-  id_scoot_send?: number;
+interface OrderDetail {
+  id_scoot_ride: number;
   id_customer: string;
   id_driver: string;
-  teks_customer: string | null;
-  teks_driver: string | null;
-  timestamp: string;
+  lokasi_jemput: string;
+  lokasi_tujuan: string;
+  tarif: number;
+  status: string;
 }
 
 const HalamanChat_Ride_Driver: React.FC = () => {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const scrollViewRef = React.useRef<ScrollViewType | null>(null);
 
-  // Ambil data order dari params
-  const orderData = {
-    id: params.orderId as string || '12345',
-    tujuan: params.tujuan as string || 'Jl. Merdeka No. 123, Pati',
-    asal: params.asal as string || 'UNS Kentingan',
-    waktu: params.waktu as string || '5 menit yang lalu',
-    tarif: params.tarif as string || 'Rp 15.000',
-    serviceType: params.serviceType as string || 'ride',
-    customerId: params.customerId as string || '',
-    driverId: params.driverId as string || '',
-  };
-
+  // State untuk data
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [inputText, setInputText] = React.useState('');
-  const [currentUser, setCurrentUser] = React.useState<'customer' | 'driver'>('customer');
-  const [isLoading, setIsLoading] = React.useState(false);
-  const [resolvedIds, setResolvedIds] = React.useState({
-    customerId: orderData.customerId,
-    driverId: orderData.driverId,
-  });
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isSending, setIsSending] = React.useState(false);
+
+  // Auth & User Info
   const [authUserId, setAuthUserId] = React.useState<string>('');
-  const [initialMessagesInserted, setInitialMessagesInserted] = React.useState(false);
-  const [otherUserName, setOtherUserName] = React.useState<string | null>(null);
-  const [otherUserPhoto, setOtherUserPhoto] = React.useState<string | null>(null);
+  const [currentUser, setCurrentUser] = React.useState<'customer' | 'driver'>('driver');
 
-  // Helper: try resolve user id from stored NIM
-  const resolveFromStoredNim = async (): Promise<string | null> => {
+  // Order Data
+  const [orderId, setOrderId] = React.useState<number>(0);
+  const [customerId, setCustomerId] = React.useState<string>('');
+  const [driverId, setDriverId] = React.useState<string>('');
+  const [orderDetail, setOrderDetail] = React.useState<OrderDetail | null>(null);
+
+  // UI Data
+  const [counterpartInfo, setCounterpartInfo] = React.useState<{
+    nama: string;
+    foto_url: string | null;
+  }>({
+    nama: 'Counterpart',
+    foto_url: null
+  });
+
+  // State untuk tracking data readiness
+  const [idsReady, setIdsReady] = React.useState(false);
+
+  const scrollViewRef = React.useRef<ScrollView>(null);
+
+  // 🔑 Fungsi untuk mengambil UUID driver dari tabel driver berdasarkan NIM
+  const getDriverUuidFromNim = async (nim: string): Promise<string | null> => {
     try {
-      const storedNim = await AsyncStorage.getItem('nim');
-      if (!storedNim) return null;
+      console.log('🔍 Mencari UUID driver dengan NIM:', nim);
       
-      // try driver first
-      const { data: drv, error: drvErr } = await supabase
-        .from('driver')
-        .select('id,nama,nim')
-        .eq('nim', storedNim)
-        .maybeSingle();
-      
-      if (!drvErr && drv) {
-        setAuthUserId(drv.id);
-        setCurrentUser('driver');
-        setResolvedIds(prev => ({ ...prev, driverId: drv.id }));
-        return drv.id;
-      }
-      
-      // try customer
-      const { data: cust, error: custErr } = await supabase
-        .from('customer')
-        .select('id,nama,nim')
-        .eq('nim', storedNim)
-        .maybeSingle();
-      
-      if (!custErr && cust) {
-        setAuthUserId(cust.id);
-        setCurrentUser('customer');
-        setResolvedIds(prev => ({ ...prev, customerId: cust.id }));
-        return cust.id;
-      }
-      
-      return null;
-    } catch (e) {
-      console.error('resolveFromStoredNim error', e);
-      return null;
-    }
-  };
-
-  // Add helper to map service -> chat table and id column
-  const getChatMeta = (serviceType: string) => {
-    switch (serviceType) {
-      case "food":
-        return { table: "chat_food", idColumn: "id_scoot_food" };
-      case "send":
-        return { table: "chat_send", idColumn: "id_scoot_send" };
-      default:
-        return { table: "chat_ride", idColumn: "id_scoot_ride" };
-    }
-  };
-
-  // Konversi data chat ke format message
-  const convertToMessages = (data: ChatMessage[]): Message[] => {
-    const formattedMessages: Message[] = [];
-    
-    data.forEach((msg: ChatMessage) => {
-      // Jika ada pesan dari customer
-      if (msg.teks_customer && msg.teks_customer.trim() !== '') {
-        formattedMessages.push({
-          id: msg.id_chat * 2,
-          sender: 'customer',
-          text: msg.teks_customer,
-          timestamp: new Date(msg.timestamp).toLocaleTimeString('id-ID', {
-            hour: '2-digit',
-            minute: '2-digit'
-          })
-        });
-      }
-      
-      // Jika ada pesan dari driver
-      if (msg.teks_driver && msg.teks_driver.trim() !== '') {
-        formattedMessages.push({
-          id: msg.id_chat * 2 + 1,
-          sender: 'driver',
-          text: msg.teks_driver,
-          timestamp: new Date(msg.timestamp).toLocaleTimeString('id-ID', {
-            hour: '2-digit',
-            minute: '2-digit'
-          })
-        });
-      }
-    });
-    
-    return formattedMessages;
-  };
-
-  // Load chat messages dari database
-  const loadMessages = async () => {
-    try {
-      const { table, idColumn } = getChatMeta(orderData.serviceType);
-      const orderId = parseInt(orderData.id, 10);
-
       const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .eq(idColumn, orderId)
-        .order("timestamp", { ascending: true });
+        .from('driver')
+        .select('id')
+        .eq('nim', nim)
+        .maybeSingle();
 
       if (error) {
-        console.error("Error loading messages:", error);
-        return;
+        console.warn('⚠️ Error mengambil UUID driver dari tabel:', error);
+        return null;
       }
 
-      if (data) {
-        const formatted = convertToMessages(data as any);
-        setMessages(formatted);
-        setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: true }), 100);
+      if (data && data.id) {
+        const driverUuid = data.id;
+        console.log('✅ UUID driver ditemukan:', driverUuid);
+        
+        await AsyncStorage.setItem('driver_id', driverUuid);
+        await AsyncStorage.setItem('driver_uuid', driverUuid);
+        console.log('💾 Driver UUID disimpan ke AsyncStorage');
+        
+        return driverUuid;
       }
-    } catch (err) {
-      console.error("Error loading messages:", err);
+
+      console.warn('⚠️ UUID driver tidak ditemukan untuk NIM:', nim);
+      return null;
+    } catch (error) {
+      console.error('❌ Error dalam getDriverUuidFromNim:', error);
+      return null;
     }
   };
 
-  // Detect user role and setup initial data
-  const detectUserRole = React.useCallback(async () => {
+  // 🔑 Fungsi untuk mengambil UUID customer dari tabel customer berdasarkan NIM
+  const getCustomerUuidFromNim = async (nim: string): Promise<string | null> => {
     try {
-      let userId: string | undefined;
+      console.log('🔍 Mencari UUID customer dengan NIM:', nim);
       
-      // Try getUser first
-      try {
-        const { data: authResp } = await supabase.auth.getUser();
-        userId = authResp?.user?.id;
-      } catch (e) {
-        console.log('getUser failed, trying getSession');
-      }
-      
-      // Fallback to getSession
-      if (!userId) {
-        try {
-          const { data: sessionResp } = await supabase.auth.getSession();
-          userId = sessionResp?.session?.user?.id;
-        } catch (e) {
-          console.log('getSession failed, trying NIM lookup');
-        }
-      }
-      
-      // Fallback to AsyncStorage NIM-based lookup
-      if (!userId) {
-        userId = await resolveFromStoredNim() || undefined;
-      }
-
-      if (!userId) {
-        console.warn('User ID not found from auth or NIM');
-        return;
-      }
-
-      console.log('🔍 Resolved Auth User ID:', userId);
-      setAuthUserId(userId);
-
-      // Cek apakah user adalah customer atau driver
-      const { data: custCheck } = await supabase
+      const { data, error } = await supabase
         .from('customer')
         .select('id')
-        .eq('id', userId)
+        .eq('nim', nim)
         .maybeSingle();
+
+      if (error) {
+        console.warn('⚠️ Error mengambil UUID customer dari tabel:', error);
+        return null;
+      }
+
+      if (data && data.id) {
+        const customerUuid = data.id;
+        console.log('✅ UUID customer ditemukan:', customerUuid);
+        
+        await AsyncStorage.setItem('customer_id', customerUuid);
+        await AsyncStorage.setItem('customer_uuid', customerUuid);
+        console.log('💾 Customer UUID disimpan ke AsyncStorage');
+        
+        return customerUuid;
+      }
+
+      console.warn('⚠️ UUID customer tidak ditemukan untuk NIM:', nim);
+      return null;
+    } catch (error) {
+      console.error('❌ Error dalam getCustomerUuidFromNim:', error);
+      return null;
+    }
+  };
+
+  // 🔄 Fungsi untuk resolve ID (NIM ke UUID jika diperlukan)
+  const resolveToUuid = async (id: string, role: 'customer' | 'driver'): Promise<string> => {
+    if (id.includes('-')) {
+      console.log(`✅ ${role} ID sudah dalam format UUID:`, id);
+      return id;
+    }
+
+    console.log(`🔄 ${role} ID adalah NIM, converting ke UUID...`);
+    const uuid = role === 'driver' 
+      ? await getDriverUuidFromNim(id)
+      : await getCustomerUuidFromNim(id);
+    
+    if (!uuid) {
+      console.warn(`⚠️ Gagal konversi ${role} NIM ke UUID:`, id);
+      return id;
+    }
+
+    return uuid;
+  };
+
+  // 🔑 Resolve driver UUID from multiple sources
+  const resolveDriverUuid = async (): Promise<string | null> => {
+    try {
+      // 1. try supabase auth getUser
+      try {
+        const { data } = await supabase.auth.getUser();
+        const uid = data?.user?.id;
+        if (uid) return uid;
+      } catch (_) {}
+
+      // 2. try supabase session
+      try {
+        const { data } = await supabase.auth.getSession();
+        const uid = data?.session?.user?.id;
+        if (uid) return uid;
+      } catch (_) {}
+
+      // 3. try AsyncStorage common keys
+      const keys = ['driver_id','driver_uuid','userId','user_id','user_uuid','userNim','nim'];
+      for (const k of keys) {
+        const v = await AsyncStorage.getItem(k);
+        if (v) {
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(v)) return v;
+          const found = await getDriverUuidFromNim(v);
+          if (found) return found;
+        }
+      }
+
+      return null;
+    } catch (err) {
+      console.error('❌ resolveDriverUuid error', err);
+      return null;
+    }
+  };
+
+  // 📱 Fungsi untuk mendapatkan Driver ID dari berbagai sumber
+  const getDriverIdFromStorage = async (): Promise<string | null> => {
+    try {
+      console.log('🔍 Mencari Driver ID dari AsyncStorage...');
       
-      if (custCheck) {
-        setCurrentUser('customer');
-        console.log('✅ Logged in as CUSTOMER');
-        setResolvedIds(prev => ({ 
-          customerId: userId!,
-          driverId: prev.driverId || orderData.driverId
-        }));
+      const possibleKeys = [
+        'driver_id',
+        'driver_uuid', 
+        'driverId',
+        'id_driver',
+        'userId',
+        'user_id',
+        'userNim',
+        'nim'
+      ];
+
+      for (const key of possibleKeys) {
+        const value = await AsyncStorage.getItem(key);
+        if (value) {
+          console.log(`✅ Driver ID ditemukan di AsyncStorage (${key}):`, value);
+          return value;
+        }
+      }
+
+      console.log('⚠️ Driver ID tidak ditemukan di AsyncStorage');
+      return null;
+    } catch (error) {
+      console.error('❌ Error reading from AsyncStorage:', error);
+      return null;
+    }
+  };
+
+  // 🔐 Step 1: Detect user role & resolve IDs
+  React.useEffect(() => {
+    const detectUserRole = async () => {
+      try {
+        let userId: string | undefined;
+
+        // 1️⃣ Coba dari AsyncStorage dulu
+        const storedDriverId = await getDriverIdFromStorage();
+        if (storedDriverId) {
+          userId = storedDriverId;
+          console.log('📱 User ID dari AsyncStorage:', userId);
+        }
+
+        // 2️⃣ Jika tidak ada di AsyncStorage, coba dari Supabase Auth
+        if (!userId) {
+          try {
+            const { data } = await supabase.auth.getUser();
+            userId = data?.user?.id;
+            if (userId) {
+              console.log('🔐 User ID dari Supabase Auth (getUser):', userId);
+              await AsyncStorage.setItem('driver_id', userId);
+            }
+          } catch (e) {
+            const { data } = await supabase.auth.getSession();
+            userId = data?.session?.user?.id;
+            if (userId) {
+              console.log('🔐 User ID dari Supabase Auth (getSession):', userId);
+              await AsyncStorage.setItem('driver_id', userId);
+            }
+          }
+        }
+
+        if (!userId) {
+          console.warn('⚠️ User ID tidak ditemukan');
+          Alert.alert('Error', 'Tidak dapat mendeteksi user ID. Silakan login kembali.');
+          setIsLoading(false);
+          return;
+        }
+
+        // 3️⃣ Resolve ke UUID jika perlu
+        let resolvedUserId = userId;
+        if (!userId.includes('-')) {
+          let uuid = await getDriverUuidFromNim(userId);
+          if (uuid) {
+            resolvedUserId = uuid;
+            setCurrentUser('driver');
+            console.log('✅ User is DRIVER (resolved from NIM)');
+          } else {
+            uuid = await getCustomerUuidFromNim(userId);
+            if (uuid) {
+              resolvedUserId = uuid;
+              setCurrentUser('customer');
+              console.log('✅ User is CUSTOMER (resolved from NIM)');
+            }
+          }
+        } else {
+          // Sudah UUID, cek di tabel mana
+          const { data: custCheck } = await supabase
+            .from('customer')
+            .select('id')
+            .eq('id', userId)
+            .maybeSingle();
+
+          if (custCheck) {
+            setCurrentUser('customer');
+            console.log('✅ User is CUSTOMER');
+          } else {
+            const { data: drvCheck } = await supabase
+              .from('driver')
+              .select('id')
+              .eq('id', userId)
+              .maybeSingle();
+
+            if (drvCheck) {
+              setCurrentUser('driver');
+              console.log('✅ User is DRIVER');
+            }
+          }
+        }
+
+        setAuthUserId(resolvedUserId);
+        console.log('✅ Auth User ID (resolved):', resolvedUserId);
+
+        // 4️⃣ Simpan final resolved ID ke AsyncStorage
+        await AsyncStorage.setItem('driver_id', resolvedUserId);
+        await AsyncStorage.setItem('current_user_id', resolvedUserId);
+
+      } catch (err) {
+        console.error('❌ Error detecting user role:', err);
+        Alert.alert('Error', 'Gagal mendeteksi user role: ' + (err as Error).message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    detectUserRole();
+  }, []);
+
+  // 📦 Step 2: Resolve Order & User IDs from params
+  React.useEffect(() => {
+    const resolveParams = async () => {
+      if (params?.orderId) {
+        const parsedOrderId = parseInt(String(params.orderId), 10);
+        setOrderId(parsedOrderId);
+        console.log('📦 Order ID from params:', parsedOrderId);
+      }
+      
+      if (params?.customerId) {
+        const custId = String(params.customerId);
+        const resolvedCustId = await resolveToUuid(custId, 'customer');
+        setCustomerId(resolvedCustId);
+        console.log('👤 Customer ID resolved:', resolvedCustId);
+      }
+      
+      if (params?.driverId) {
+        const drvId = String(params.driverId);
+        const resolvedDrvId = await resolveToUuid(drvId, 'driver');
+        setDriverId(resolvedDrvId);
+        console.log('🚗 Driver ID resolved:', resolvedDrvId);
+        
+        await AsyncStorage.setItem('driver_id', resolvedDrvId);
+      }
+    };
+
+    resolveParams();
+  }, [params]);
+
+  // 📋 Step 3: Fetch Order Detail
+  React.useEffect(() => {
+    const fetchOrderDetail = async () => {
+      try {
+        if (!orderId) return;
+
+        console.log('📋 Fetching order detail for ID:', orderId);
+
+        const { data, error } = await supabase
+          .from('scoot_ride')
+          .select('id_scoot_ride, id_customer, id_driver, lokasi_jemput, lokasi_tujuan, tarif, status')
+          .eq('id_scoot_ride', orderId)
+          .maybeSingle();
+
+        if (error) {
+          console.error('❌ Error fetching order:', error);
+          throw error;
+        }
+
+        if (data) {
+          setOrderDetail(data);
+          
+          // Update IDs dan check readiness
+          let newCustomerId = customerId;
+          let newDriverId = driverId;
+          
+          if (!customerId && data.id_customer) {
+            newCustomerId = data.id_customer;
+            setCustomerId(data.id_customer);
+            await AsyncStorage.setItem('customer_id', data.id_customer);
+          }
+          
+          if (!driverId && data.id_driver) {
+            newDriverId = data.id_driver;
+            setDriverId(data.id_driver);
+            await AsyncStorage.setItem('driver_id', data.id_driver);
+          }
+          
+          // Check if both IDs are ready
+          if (newCustomerId && newDriverId) {
+            console.log('✅ Both IDs ready after order fetch:', { newCustomerId, newDriverId });
+            setIdsReady(true);
+          }
+          
+          console.log('✅ Order Detail loaded:', data);
+        } else {
+          console.warn('⚠️ Order not found');
+          Alert.alert('Info', 'Order tidak ditemukan');
+        }
+      } catch (err) {
+        console.error('❌ Error fetching order detail:', err);
+        Alert.alert('Error', 'Gagal memuat detail order: ' + (err as Error).message);
+      }
+    };
+
+    fetchOrderDetail();
+  }, [orderId]);
+
+  // 🔔 Auto-take order if requested
+  React.useEffect(() => {
+    const tryAutoTake = async () => {
+      try {
+        const shouldTake = String(params?.take || params?.ambil || params?.action || '').toLowerCase() === 'true' ||
+          String(params?.from || '').toLowerCase() === 'ambil';
+        if (!shouldTake) return;
+        if (!orderId) {
+          console.warn('⚠️ Auto-take requested but orderId not set yet');
+          return;
+        }
+
+        const driverUuid = await resolveDriverUuid();
+        if (!driverUuid) {
+          Alert.alert('Gagal', 'Driver ID tidak ditemukan. Silakan login ulang.');
+          console.warn('Driver UUID not resolved for auto-take');
+          return;
+        }
+
+        console.log('🔧 Auto-taking order', orderId, 'with driver', driverUuid);
+
+        const { data, error } = await supabase
+          .from('scoot_ride')
+          .update({ id_driver: driverUuid, status: 'on progress' })
+          .eq('id_scoot_ride', orderId)
+          .is('id_driver', null)
+          .select();
+
+        if (error) {
+          console.warn('Gagal update scoot_ride on take:', error);
+          Alert.alert('Gagal mengambil pesanan', error.message || String(error));
+        } else {
+          if (Array.isArray(data) && data.length > 0) {
+            const updated = data[0];
+            setOrderDetail(prev => ({ ...(prev || {}), id_driver: updated.id_driver, status: updated.status } as OrderDetail));
+            setDriverId(String(updated.id_driver));
+            await AsyncStorage.setItem('driver_id', String(updated.id_driver));
+            console.log('✅ Order updated and UI refreshed');
+          } else {
+            if (data && (data as any).id_scoot_ride) {
+              const updated = data as any;
+              setOrderDetail(prev => ({ ...(prev || {}), id_driver: updated.id_driver, status: updated.status } as OrderDetail));
+              setDriverId(String(updated.id_driver));
+              await AsyncStorage.setItem('driver_id', String(updated.id_driver));
+              console.log('✅ Order updated and UI refreshed (single)');
+            } else {
+              console.log('ℹ️ Update succeeded but no returned row; refreshing by fetching order detail');
+              const { data: refetch, error: refError } = await supabase
+                .from('scoot_ride')
+                .select('id_scoot_ride, id_customer, id_driver, lokasi_jemput, lokasi_tujuan, tarif, status')
+                .eq('id_scoot_ride', orderId)
+                .maybeSingle();
+              if (!refError && refetch) {
+                setOrderDetail(refetch);
+                if (refetch.id_driver) {
+                  setDriverId(refetch.id_driver);
+                  await AsyncStorage.setItem('driver_id', refetch.id_driver);
+                }
+                console.log('✅ Refetched order detail after update');
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('❌ auto-take error', err);
+      }
+    };
+
+    tryAutoTake();
+  }, [params, orderId]);
+
+  // 🔧 FIXED: Fetch counterpart info - HANYA query kolom 'nama'
+  React.useEffect(() => {
+    const fetchCounterpartInfo = async () => {
+      // Wait until both customerId and driverId are available
+      if (!customerId || !driverId) {
+        console.log('⏳ Waiting for both IDs...', { customerId, driverId });
         return;
       }
 
-      const { data: drvCheck } = await supabase
-        .from('driver')
-        .select('id')
-        .eq('id', userId)
-        .maybeSingle();
-      
-      if (drvCheck) {
-        setCurrentUser('driver');
-        console.log('✅ Logged in as DRIVER');
-        setResolvedIds(prev => ({ 
-          customerId: prev.customerId || orderData.customerId,
-          driverId: userId!
-        }));
+      // Mark as ready
+      if (!idsReady) {
+        console.log('✅ Both IDs now available, marking ready');
+        setIdsReady(true);
       }
-    } catch (error) {
-      console.error('Error detecting user role:', error);
-    }
-  }, [orderData.customerId, orderData.driverId]);
 
-  // Setup initial data
-  React.useEffect(() => {
-    detectUserRole();
-    loadMessages();
-  }, []);
+      try {
+        console.log('👤 Fetching counterpart info...', { 
+          currentUser, 
+          customerId, 
+          driverId 
+        });
 
-  // Setup real-time subscription
-  React.useEffect(() => {
-    const { table, idColumn } = getChatMeta(orderData.serviceType);
-    const orderId = parseInt(orderData.id, 10);
+        if (currentUser === 'driver' && customerId) {
+          console.log('👤 Fetching customer info for ID:', customerId);
+          
+          // ✅ FIXED: Hanya query kolom 'nama', tidak query foto_url
+          const { data, error } = await supabase
+            .from('customer')
+            .select('nama')
+            .eq('id', customerId)
+            .maybeSingle();
+
+          if (error) {
+            console.warn('⚠️ Error fetching customer info:', error);
+            setCounterpartInfo({ nama: 'Customer', foto_url: null });
+          } else if (data) {
+            setCounterpartInfo({
+              nama: data.nama || 'Customer',
+              foto_url: null // Set null karena tidak ada kolom foto_url
+            });
+            console.log('✅ Customer Info loaded:', data.nama);
+          } else {
+            console.warn('⚠️ No customer data found');
+            setCounterpartInfo({ nama: 'Customer', foto_url: null });
+          }
+        } else if (currentUser === 'customer' && driverId) {
+          console.log('👤 Fetching driver info for ID:', driverId);
+          
+          // ✅ FIXED: Hanya query kolom 'nama', tidak query foto_url
+          const { data, error } = await supabase
+            .from('driver')
+            .select('nama')
+            .eq('id', driverId)
+            .maybeSingle();
+
+          if (error) {
+            console.warn('⚠️ Error fetching driver info:', error);
+            setCounterpartInfo({ nama: 'Driver', foto_url: null });
+          } else if (data) {
+            setCounterpartInfo({
+              nama: data.nama || 'Driver',
+              foto_url: null // Set null karena tidak ada kolom foto_url
+            });
+            console.log('✅ Driver Info loaded:', data.nama);
+          } else {
+            console.warn('⚠️ No driver data found');
+            setCounterpartInfo({ nama: 'Driver', foto_url: null });
+          }
+        }
+      } catch (err) {
+        console.error('❌ Error fetching counterpart info:', err);
+        setCounterpartInfo({
+          nama: currentUser === 'driver' ? 'Customer' : 'Driver',
+          foto_url: null
+        });
+      }
+    };
+
+    fetchCounterpartInfo();
+  }, [currentUser, customerId, driverId]);
+
+  // 💬 Step 5: Load Chat History
+  const loadMessages = React.useCallback(async () => {
+    if (!orderId) return;
     
-    console.log('📡 Setting up realtime subscription:', {
-      table,
-      idColumn,
-      orderId
-    });
+    try {
+      console.log('💬 Loading messages for order:', orderId);
 
-    // Subscribe to realtime changes
+      const { data, error } = await supabase
+        .from('chat_ride')
+        .select('id_chat, teks_customer, teks_driver, timestamp')
+        .eq('id_scoot_ride', orderId)
+        .order('timestamp', { ascending: true });
+
+      if (error) throw error;
+
+      const formatted: Message[] = [];
+      (data || []).forEach((row: any) => {
+        if (row.teks_customer) {
+          formatted.push({
+            id: `${row.id_chat}-cust`,
+            text: row.teks_customer,
+            sender: 'customer',
+            timestamp: formatTime(row.timestamp)
+          });
+        }
+        if (row.teks_driver) {
+          formatted.push({
+            id: `${row.id_chat}-drv`,
+            text: row.teks_driver,
+            sender: 'driver',
+            timestamp: formatTime(row.timestamp)
+          });
+        }
+      });
+
+      setMessages(formatted);
+      console.log('✅ Messages loaded:', formatted.length);
+    } catch (err) {
+      console.error('❌ Error loading messages:', err);
+    }
+  }, [orderId]);
+
+  React.useEffect(() => {
+    loadMessages();
+  }, [orderId, loadMessages]);
+
+  // 🔄 Step 6: Setup Realtime Subscription
+  React.useEffect(() => {
+    if (!orderId) return;
+
+    console.log('🔔 Setting up realtime subscription for order:', orderId);
+
     const channel = supabase
-      .channel(`chat-${table}-${orderId}`)
+      .channel(`chat_ride_${orderId}`)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
-          table,
-          filter: `${idColumn}=eq.${orderId}`
+          table: 'chat_ride',
+          filter: `id_scoot_ride=eq.${orderId}`
         },
-        (payload: any) => {
-          console.log('📨 New message received:', payload.new);
-          const newMessage = payload.new as ChatMessage;
-          const formattedMessage = convertToMessages([newMessage]);
+        (payload) => {
+          console.log('📡 Realtime message received:', payload);
           
-          // Hindari duplikasi pesan
-          setMessages(prev => {
-            const existingIds = new Set(prev.map(m => m.id));
-            const newMessages = formattedMessage.filter(m => !existingIds.has(m.id));
-            return [...prev, ...newMessages];
-          });
-          
-          // Scroll to bottom for new message
-          setTimeout(() => {
-            scrollViewRef.current?.scrollToEnd({ animated: true });
-          }, 100);
+          const newRow = payload.new as any;
+          const newMessages: Message[] = [];
+
+          if (newRow.teks_customer) {
+            newMessages.push({
+              id: `${newRow.id_chat}-cust`,
+              text: newRow.teks_customer,
+              sender: 'customer',
+              timestamp: formatTime(newRow.timestamp)
+            });
+          }
+
+          if (newRow.teks_driver) {
+            newMessages.push({
+              id: `${newRow.id_chat}-drv`,
+              text: newRow.teks_driver,
+              sender: 'driver',
+              timestamp: formatTime(newRow.timestamp)
+            });
+          }
+
+          if (newMessages.length > 0) {
+            setMessages((prev) => [...prev, ...newMessages]);
+            console.log('✅ New messages added to state');
+          }
         }
       )
-      .subscribe((status) => {
-        console.log('📡 Subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-          console.log('✅ Berhasil subscribe ke realtime');
-        } else if (status === 'CLOSED') {
-          console.log('❌ Subscription closed');
-        } else if (status === 'CHANNEL_ERROR') {
-          console.error('❌ Subscription error');
-        }
-      });
+      .subscribe();
 
-    // Cleanup subscription
     return () => {
-      console.log('🔌 Unsubscribing from realtime');
-      supabase.removeChannel(channel);
+      console.log('🔕 Unsubscribing from realtime channel');
+      channel.unsubscribe();
     };
-  }, [orderData.id, orderData.serviceType]);
+  }, [orderId]);
 
-  // Send message untuk realtime
+  // 📨 Step 7: Send Message
   const handleSendMessage = async () => {
-    if (inputText.trim() === '') return;
-    setIsLoading(true);
+    const text = inputText.trim();
+    if (!text) return;
+    if (!orderId) {
+      Alert.alert('Error', 'Order ID tidak ditemukan');
+      return;
+    }
+
+    setIsSending(true);
+    setInputText('');
 
     try {
-      const { table, idColumn } = getChatMeta(orderData.serviceType);
-      const orderId = parseInt(orderData.id, 10);
-      
-      // Ensure we have authUserId
-      let userId = authUserId;
-      if (!userId) {
-        userId = await resolveFromStoredNim() || '';
-      }
-
-      if (!userId) {
-        Alert.alert('Error', 'User ID tidak ditemukan. Silakan login ulang.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Gunakan resolvedIds yang sudah diset
-      let finalCustomerId = resolvedIds.customerId || orderData.customerId;
-      let finalDriverId = resolvedIds.driverId || orderData.driverId;
-
-      // Update IDs based on current user
-      if (currentUser === 'customer') {
-        finalCustomerId = userId;
-      } else {
-        finalDriverId = userId;
-      }
-
-      // Validasi akhir
-      if (!finalCustomerId || !finalDriverId) {
-        console.error('❌ Missing IDs:', {
-          finalCustomerId,
-          finalDriverId,
-          resolvedIds,
-          currentUser
-        });
-        Alert.alert('Error', 'ID Customer atau Driver tidak ditemukan. Coba refresh halaman.');
-        setIsLoading(false);
-        return;
-      }
-
-      const chatData: Record<string, any> = {
-        id_customer: finalCustomerId,
-        id_driver: finalDriverId,
-        timestamp: new Date().toISOString(),
-        teks_customer: currentUser === 'customer' ? inputText.trim() : null,
-        teks_driver: currentUser === 'driver' ? inputText.trim() : null,
+      const payload: any = {
+        id_scoot_ride: orderId,
+        timestamp: new Date().toISOString()
       };
-      chatData[idColumn] = orderId;
 
-      console.log('💬 Sending chat data:', chatData);
+      if (currentUser === 'driver') {
+        payload.teks_driver = text;
+        payload.teks_customer = null;
+      } else {
+        payload.teks_customer = text;
+        payload.teks_driver = null;
+      }
+
+      console.log('📤 Sending message:', payload);
 
       const { error } = await supabase
-        .from(table)
-        .insert([chatData]);
+        .from('chat_ride')
+        .insert([payload]);
 
-      if (error) {
-        console.error('Error sending message:', error);
-        Alert.alert('Error', 'Gagal mengirim pesan. Silakan coba lagi.');
-        return;
-      }
+      if (error) throw error;
 
       console.log('✅ Message sent successfully');
-      setInputText('');
-      
-      // Fallback reload setelah delay
-      setTimeout(() => {
-        loadMessages();
-      }, 500);
-    } catch (error) {
-      console.error('Error sending message:', error);
-      Alert.alert('Error', 'Terjadi kesalahan. Silakan coba lagi.');
+
+    } catch (err) {
+      console.error('❌ Error sending message:', err);
+      Alert.alert('Error', 'Gagal mengirim pesan');
+      setInputText(text);
     } finally {
-      setIsLoading(false);
+      setIsSending(false);
     }
   };
 
-  // Otomatis insert pesan awal jika belum ada
-  React.useEffect(() => {
-    const insertInitialMessages = async () => {
-      if (initialMessagesInserted) return;
-      if (!resolvedIds.customerId || !resolvedIds.driverId) return;
+  const formatTime = (timestamp: string | null) => {
+    if (!timestamp) return '';
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleTimeString('id-ID', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false 
+      });
+    } catch (e) {
+      return '';
+    }
+  };
 
-      try {
-        const { table, idColumn } = getChatMeta(orderData.serviceType);
-        const orderId = parseInt(orderData.id, 10);
-
-        // Cek apakah sudah ada pesan
-        const { data: existing } = await supabase
-          .from(table)
-          .select('id_chat')
-          .eq(idColumn, orderId)
-          .limit(1);
-
-        if (existing && existing.length > 0) {
-          setInitialMessagesInserted(true);
-          return;
-        }
-
-        // Insert pesan customer otomatis
-        const customerMessage = `Hallo, tolong jemput saya :\nDari  : ${orderData.asal}\nKe     : ${orderData.tujuan}\nTerimakasih, saya tunggu ya 😊`;
-        await supabase.from(table).insert([{
-          id_customer: resolvedIds.customerId,
-          id_driver: resolvedIds.driverId,
-          timestamp: new Date().toISOString(),
-          teks_customer: customerMessage,
-          teks_driver: null,
-          [idColumn]: orderId
-        }]);
-
-        // Insert pesan driver otomatis
-        const driverMessage = 'Siap, otw ke lokasi Anda';
-        await supabase.from(table).insert([{
-          id_customer: resolvedIds.customerId,
-          id_driver: resolvedIds.driverId,
-          timestamp: new Date(Date.now() + 5000).toISOString(),
-          teks_customer: null,
-          teks_driver: driverMessage,
-          [idColumn]: orderId
-        }]);
-
-        setInitialMessagesInserted(true);
-        loadMessages();
-      } catch (err) {
-        console.error('Error inserting initial messages:', err);
-      }
-    };
-
-    insertInitialMessages();
-  }, [resolvedIds, orderData, initialMessagesInserted]);
-
-  // Ensure customerId/driverId resolved and fetch counterpart name/photo
-  React.useEffect(() => {
-    const fetchCounterpartInfo = async () => {
-      try {
-        // prefer resolvedIds set earlier, fallback to params
-        const custId = resolvedIds.customerId || (params?.customerId as string) || '';
-        const drvId = resolvedIds.driverId || (params?.driverId as string) || '';
-
-        if (currentUser === 'driver' && custId) {
-          const { data } = await supabase
-            .from('customer')
-            .select('nama, foto_url')
-            .eq('id', custId)
-            .maybeSingle();
-          if (data) {
-            setOtherUserName(data.nama ?? 'Customer');
-            setOtherUserPhoto(data.foto_url ?? null);
-            return;
-          }
-        }
-
-        if (currentUser === 'customer' && drvId) {
-          const { data } = await supabase
-            .from('driver')
-            .select('nama, foto_url')
-            .eq('id', drvId)
-            .maybeSingle();
-          if (data) {
-            setOtherUserName(data.nama ?? 'Driver');
-            setOtherUserPhoto(data.foto_url ?? null);
-            return;
-          }
-        }
-
-        // fallback: if params include customerName, use it
-        if (params?.customerName) {
-          setOtherUserName(String(params.customerName));
-        } else {
-          setOtherUserName(currentUser === 'driver' ? 'Customer' : 'Driver');
-        }
-      } catch (err) {
-        console.error('fetchCounterpartInfo error', err);
-      }
-    };
-
-    fetchCounterpartInfo();
-  }, [resolvedIds.customerId, resolvedIds.driverId, currentUser, params]);
+  // 🎨 Loading State
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={[styles.content, { justifyContent: 'center', alignItems: 'center' }]}>
+          <ActivityIndicator size="large" color="#016837" />
+          <Text style={{ marginTop: 12, color: '#666', fontFamily: 'Montserrat-Regular' }}>
+            Memuat chat...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <SafeAreaView style={styles.halamanChat}>
-        <View style={styles.view}>
-          {/* Header Section */}
+      <SafeAreaView style={styles.container}>
+        <View style={styles.content}>
+
+          {/* 🎯 Header */}
           <View style={styles.header}>
             <TouchableOpacity 
               style={styles.backButton}
@@ -505,23 +751,42 @@ const HalamanChat_Ride_Driver: React.FC = () => {
             </TouchableOpacity>
 
             <Image 
-              style={styles.customerIcon} 
-              source={
-                otherUserPhoto
-                  ? { uri: otherUserPhoto }
-                  : (params.customerPhoto ? { uri: String(params.customerPhoto) } : require('../../../../assets/images/Passenger.png'))
-              }
-               resizeMode="cover" 
+              style={styles.counterpartIcon} 
+              source={require('../../../../assets/images/Passenger.png')}
+              resizeMode="cover" 
             />
-            <Text style={styles.customerName}>{otherUserName ?? (params.customerName || "Customer")}</Text>
-            <View style={styles.statusBadge}>
-              <Text style={styles.statusText}>
-                {orderData.serviceType === 'ride' ? 'Ride' : orderData.serviceType === 'food' ? 'Food' : 'Send'}
-              </Text>
+            
+            <View style={styles.headerTextContainer}>
+              <Text style={styles.counterpartName}>{counterpartInfo.nama}</Text>
+              <Text style={styles.statusBadge}>Ride Order #{orderId}</Text>
             </View>
           </View>
 
-          {/* Chat Messages Container */}
+          {/* 📋 Order Info Card */}
+          {orderDetail && (
+            <View style={styles.orderCard}>
+              <View style={styles.orderRow}>
+                <Text style={styles.orderLabel}>📍 Dari:</Text>
+                <Text style={styles.orderValue}>{orderDetail.lokasi_jemput}</Text>
+              </View>
+              <View style={styles.orderRow}>
+                <Text style={styles.orderLabel}>📍 Tujuan:</Text>
+                <Text style={styles.orderValue}>{orderDetail.lokasi_tujuan}</Text>
+              </View>
+              <View style={styles.orderRow}>
+                <Text style={styles.orderLabel}>💰 Tarif:</Text>
+                <Text style={styles.orderValue}>Rp {Number(orderDetail.tarif).toLocaleString('id-ID')}</Text>
+              </View>
+              <View style={[styles.orderRow, { borderBottomWidth: 0 }]}>
+                <Text style={styles.orderLabel}>📊 Status:</Text>
+                <Text style={[styles.orderValue, { color: getStatusColor(orderDetail.status), fontWeight: '700' }]}>
+                  {orderDetail.status}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* 💬 Chat Messages */}
           <ScrollView
             ref={scrollViewRef}
             style={styles.chatContainer}
@@ -529,236 +794,280 @@ const HalamanChat_Ride_Driver: React.FC = () => {
             onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
             showsVerticalScrollIndicator={false}
           >
-            {messages.map((message) => (
-              <View
-                key={message.id}
-                style={[
-                  styles.messageBox,
-                  message.sender === 'driver' ? styles.messageBoxDriver : styles.messageBoxUser
-                ]}
-              >
-                <Text style={message.sender === 'driver' ? styles.messageTextDriver : styles.messageTitle}>
-                  {message.text}
-                </Text>
-                <Text style={message.sender === 'driver' ? styles.timeStampDriver : styles.timeStamp}>
-                  {message.timestamp}
+            {messages.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}></Text>
+                <Text style={styles.emptyText}>Belum ada pesan</Text>
+                <Text style={[styles.emptyText, { fontSize: 12, marginTop: 8 }]}>
+                  Mulai percakapan dengan {currentUser === 'driver' ? 'customer' : 'driver'}
                 </Text>
               </View>
-            ))}
+            ) : (
+              messages.map((message) => {
+                const isOwnMessage = message.sender === currentUser;
+                
+                return (
+                  <View
+                    key={message.id}
+                    style={[
+                      styles.messageBox,
+                      isOwnMessage 
+                        ? styles.messageBoxOwn 
+                        : styles.messageBoxOther
+                    ]}
+                  >
+                    <Text style={[
+                      styles.messageText,
+                      isOwnMessage ? styles.messageTextOwn : styles.messageTextOther
+                    ]}>
+                      {message.text}
+                    </Text>
+                    <Text style={[
+                      styles.messageTime,
+                      isOwnMessage ? styles.messageTimeOwn : styles.messageTimeOther
+                    ]}>
+                      {message.timestamp}
+                    </Text>
+                  </View>
+                );
+              })
+            )}
           </ScrollView>
 
-          {/* Input Section */}
+          {/* ⌨️ Input Section */}
           <View style={styles.inputContainer}>
             <TextInput 
               style={styles.textInput}
               value={inputText}
               onChangeText={setInputText}
               placeholder="Ketikkan pesan..."
-              placeholderTextColor="rgba(0,0,0,0.5)"
-              editable={!isLoading}
+              placeholderTextColor="rgba(0,0,0,0.4)"
+              editable={!isSending}
               multiline
+              maxLength={500}
+              returnKeyType="send"
+              onSubmitEditing={handleSendMessage}
             />
             <TouchableOpacity 
               style={[
                 styles.sendButton,
-                (isLoading || inputText.trim() === '') && styles.sendButtonDisabled
+                (isSending || inputText.trim() === '') && styles.sendButtonDisabled
               ]}
               onPress={handleSendMessage}
-              disabled={isLoading || inputText.trim() === ''}
+              disabled={isSending || inputText.trim() === ''}
+              activeOpacity={0.7}
             >
-              <Text style={styles.sendButtonText}>➤</Text>
+              <Text style={styles.sendButtonText}>
+                {isSending ? '⏳' : '➤'}
+              </Text>
             </TouchableOpacity>
           </View>
+
         </View>
       </SafeAreaView>
     </>
   );
 };
 
+const getStatusColor = (status: string) => {
+  switch (status?.toLowerCase()) {
+    case 'menunggu driver':
+      return '#FFA500';
+    case 'diterima driver':
+    case 'sedang dijalankan':
+    case 'on progress':
+      return '#FF9500';
+    case 'selesai':
+      return '#34C759';
+    case 'dibatalkan':
+      return '#FF3B30';
+    default:
+      return '#666';
+  }
+};
+
 const styles = StyleSheet.create({
-  halamanChat: {
-    backgroundColor: "#fff",
-    flex: 1
-  },
-  view: {
-    width: "100%",
-    height: "100%",
-    backgroundColor: "#fff",
+  container: {
     flex: 1,
-    position: "relative"
+    backgroundColor: '#fff'
+  },
+  content: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 12
   },
   header: {
-    backgroundColor: "#fff",
-    width: "100%",
-    height: 161,
-    borderBottomRightRadius: 18,
-    borderBottomLeftRadius: 18,
-    paddingTop: 50,
-    paddingHorizontal: 20,
-    flexDirection: "row",
-    alignItems: "center",
-    position: "relative",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0'
   },
   backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
+    padding: 8,
+    marginRight: 8
   },
   backArrow: {
-    fontSize: 28,
+    fontSize: 24,
     color: '#016837',
-    fontWeight: 'bold',
+    fontWeight: 'bold'
   },
-  customerIcon: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+  counterpartIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#f0f0f0',
     borderWidth: 2,
     borderColor: '#016837'
   },
-  customerName: {
-    fontSize: 16,
-    color: "#000",
-    fontFamily: "Montserrat-Bold",
-    fontWeight: "700",
-    marginLeft: 20,
+  headerTextContainer: {
+    marginLeft: 12,
     flex: 1
   },
-  statusBadge: {
-    backgroundColor: "#fe95a3",
-    borderRadius: 33,
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    position: "absolute",
-    right: 20,
-    top: 80
+  counterpartName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#000',
+    fontFamily: 'Montserrat-Bold'
   },
-  statusText: {
-    color: "#fff",
-    fontSize: 11,
-    fontFamily: "Montserrat-Bold",
-    fontWeight: "700",
-    textAlign: "center"
+  statusBadge: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+    fontFamily: 'Montserrat-Regular'
+  },
+  orderCard: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#016837'
+  },
+  orderRow: {
+    marginBottom: 10,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0'
+  },
+  orderLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 4,
+    fontFamily: 'Montserrat-Bold'
+  },
+  orderValue: {
+    fontSize: 13,
+    color: '#000',
+    fontFamily: 'Montserrat-Regular'
   },
   chatContainer: {
     flex: 1,
-    paddingHorizontal: 19,
-    paddingTop: 20,
-    paddingBottom: 20
+    marginBottom: 12
+  },
+  emptyState: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 200
+  },
+  emptyText: {
+    color: '#999',
+    fontSize: 14,
+    fontFamily: 'Montserrat-Regular',
+    textAlign: 'center'
   },
   messageBox: {
-    marginBottom: 15
+    marginVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    maxWidth: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2
   },
-  messageBoxUser: {
-    backgroundColor: "#fff",
-    borderRadius: 25,
-    borderWidth: 1,
-    borderColor: "rgba(1, 104, 55, 0.4)",
-    padding: 20,
-    marginBottom: 15,
-    shadowColor: "#c4bfbf",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 8,
-    maxWidth: 312,
-    alignSelf: "flex-start"
+  messageBoxOwn: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#016837',
+    borderBottomRightRadius: 4
   },
-  messageTitle: {
-    fontSize: 12,
-    color: "#000",
-    fontFamily: "Montserrat-Bold",
-    fontWeight: "700",
-    lineHeight: 22,
-    marginBottom: 8
+  messageBoxOther: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#e8e8e8',
+    borderBottomLeftRadius: 4
   },
-  timeStamp: {
-    fontSize: 11,
-    color: "#000",
-    fontFamily: "Montserrat-Regular",
-    alignSelf: "flex-end",
-    marginTop: 5
+  messageText: {
+    fontSize: 14,
+    fontFamily: 'Montserrat-Regular',
+    lineHeight: 20
   },
-  messageBoxDriver: {
-    backgroundColor: "#33cc66",
-    borderRadius: 53,
-    borderWidth: 1,
-    borderColor: "rgba(1, 104, 55, 0.4)",
-    paddingHorizontal: 25,
-    paddingVertical: 12,
-    marginBottom: 15,
-    shadowColor: "#c4bfbf",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 8,
-    maxWidth: 213,
-    alignSelf: "flex-end"
+  messageTextOwn: {
+    color: '#fff'
   },
-  messageTextDriver: {
-    fontSize: 12,
-    color: "#fff",
-    fontFamily: "Montserrat-Regular",
-    lineHeight: 22,
-    textAlign: "center"
+  messageTextOther: {
+    color: '#000'
   },
-  timeStampDriver: {
-    fontSize: 11,
-    color: "#fff",
-    fontFamily: "Montserrat-Regular",
-    alignSelf: "flex-end",
-    marginTop: 5
+  messageTime: {
+    fontSize: 10,
+    marginTop: 4,
+    fontFamily: 'Montserrat-Regular'
+  },
+  messageTimeOwn: {
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'right'
+  },
+  messageTimeOther: {
+    color: 'rgba(0,0,0,0.5)',
+    textAlign: 'left'
   },
   inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 14,
-    paddingBottom: 20,
-    backgroundColor: "#fff",
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingBottom: 16,
+    paddingTop: 12,
+    gap: 8,
     borderTopWidth: 1,
-    borderTopColor: "rgba(0,0,0,0.1)"
+    borderTopColor: '#e0e0e0',
+    backgroundColor: '#fff'
   },
   textInput: {
     flex: 1,
-    backgroundColor: "#fff",
-    borderRadius: 21,
     borderWidth: 1,
-    borderColor: "rgba(1, 104, 55, 0.4)",
-    minHeight: 48,
+    borderColor: '#ddd',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     maxHeight: 100,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
     fontSize: 14,
-    fontFamily: "Montserrat-Regular",
-    color: "#000",
-    shadowColor: "#c4bfbf",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 8
+    fontFamily: 'Montserrat-Regular',
+    backgroundColor: '#f9f9f9'
   },
   sendButton: {
-    width: 48,
-    height: 48,
-    marginLeft: 8,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#016837",
-    borderRadius: 24
+    backgroundColor: '#016837',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#016837',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4
   },
   sendButtonDisabled: {
-    backgroundColor: "#ccc"
+    opacity: 0.4,
+    shadowOpacity: 0
   },
   sendButtonText: {
+    color: '#fff',
     fontSize: 20,
-    color: "#fff"
+    fontWeight: 'bold'
   }
 });
 

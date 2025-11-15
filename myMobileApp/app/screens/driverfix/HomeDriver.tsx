@@ -45,7 +45,7 @@ interface ScootSendOrder {
   lokasi_tujuan: string;
   nama_penerima: string;
   berat: number;
-  kategori_barang: string;
+  nama_barang: string;
   tarif: number;
   status: string;
 }
@@ -150,7 +150,7 @@ const HomeDriver = () => {
       // Query ScootSend (ambil semua on progress untuk driver)
       const { data: sendData, error: sendError } = await supabase
         .from('scoot_send')
-        .select('id_scoot_send, id_customer, id_driver, lokasi_jemput_barang, lokasi_tujuan, nama_penerima, berat, kategori_barang, tarif, status')
+        .select('id_scoot_send, id_customer, id_driver, lokasi_jemput_barang, lokasi_tujuan, nama_penerima, berat, nama_barang, tarif, status')
         .eq('id_driver', userId)
         .eq('status', 'on progress')
         .order('timestamp', { ascending: false });
@@ -385,6 +385,53 @@ const HomeDriver = () => {
                       <Text style={styles.chatButtonIcon}></Text>
                       <Text style={styles.chatButtonText}>Chat dengan Customer</Text>
                     </TouchableOpacity>
+
+                    {/* On Maps button - Ride (changed to "selesai" -> PembayaranRIde) */}
+                    <TouchableOpacity
+                      style={[styles.chatButton, { backgroundColor: '#0ea5a4', marginTop: 8 }]}
+                      onPress={async () => {
+                        try {
+                          const id = r.id_scoot_ride;
+                          // Update service status
+                          const { error: updErr } = await supabase
+                            .from('scoot_ride')
+                            .update({ status: 'done' })
+                            .eq('id_scoot_ride', id);
+                          if (updErr) {
+                            console.error('❌ Update scoot_ride status error:', updErr);
+                            Alert.alert('Error', 'Gagal menandai pesanan selesai. Coba lagi.');
+                            return;
+                          }
+
+                          // Insert into history_ride
+                          const { error: histErr } = await supabase
+                            .from('history_ride')
+                            .insert([{ id_scoot_ride: id, status: 'done' }]);
+                          if (histErr) {
+                            console.warn('⚠️ history_ride insert error:', histErr);
+                          } else {
+                            console.log('✅ history_ride inserted for', id);
+                          }
+
+                          // Navigate to pembayaran
+                          router.push({
+                            pathname: '/screens/driverfix/ScootRideDriver/PembayaranRide',
+                            params: {
+                              orderId: String(id),
+                              origin: r.lokasi_jemput,
+                              destination: r.lokasi_tujuan,
+                              ...userParams
+                            }
+                          });
+                        } catch (e) {
+                          console.error('❌ onPress selesai (ride) error:', e);
+                          Alert.alert('Error', 'Gagal memproses. Coba lagi.');
+                        }
+                      }}
+                       activeOpacity={0.8}
+                    >
+                      <Text style={styles.chatButtonText}>selesai</Text>
+                    </TouchableOpacity>
                   </View>
                 ))
               ) : (
@@ -443,6 +490,53 @@ const HomeDriver = () => {
                       <Text style={styles.chatButtonIcon}></Text>
                       <Text style={styles.chatButtonText}>Chat dengan Customer</Text>
                     </TouchableOpacity>
+
+                    {/* On Maps button - Food (changed to "selesai" -> PembayaranFood) */}
+                    <TouchableOpacity
+                      style={[styles.chatButton, { backgroundColor: '#0ea5a4', marginTop: 8 }]}
+                      onPress={async () => {
+                        try {
+                          const id = f.id_scoot_food;
+                          // Update service status
+                          const { error: updErr } = await supabase
+                            .from('scoot_food')
+                            .update({ status: 'done' })
+                            .eq('id_scoot_food', id);
+                          if (updErr) {
+                            console.error('❌ Update scoot_food status error:', updErr);
+                            Alert.alert('Error', 'Gagal menandai pesanan selesai. Coba lagi.');
+                            return;
+                          }
+
+                          // Insert into history_food
+                          const { error: histErr } = await supabase
+                            .from('history_food')
+                            .insert([{ id_scoot_food: id, status: 'done' }]);
+                          if (histErr) {
+                            console.warn('⚠️ history_food insert error:', histErr);
+                          } else {
+                            console.log('✅ history_food inserted for', id);
+                          }
+
+                          // Navigate to pembayaran
+                          router.push({
+                            pathname: '/screens/driverfix/ScootFoodDriver/PembayaranFood',
+                            params: {
+                              orderId: String(id),
+                              origin: f.lokasi_resto,
+                              destination: f.lokasi_tujuan,
+                              ...userParams
+                            }
+                          });
+                        } catch (e) {
+                          console.error('❌ onPress selesai (food) error:', e);
+                          Alert.alert('Error', 'Gagal memproses. Coba lagi.');
+                        }
+                      }}
+                       activeOpacity={0.8}
+                    >
+                      <Text style={styles.chatButtonText}>selesai</Text>
+                    </TouchableOpacity>
                   </View>
                 ))
               ) : (
@@ -481,7 +575,7 @@ const HomeDriver = () => {
                     </View>
                     <View style={styles.orderRow}>
                       <Text style={styles.orderLabel}>📦 Kategori Barang:</Text>
-                      <Text style={styles.orderValue}>{s.kategori_barang}</Text>
+                      <Text style={styles.orderValue}>{s.nama_barang}</Text>
                     </View>
                     <View style={styles.orderRow}>
                       <Text style={styles.orderLabel}>💰 Tarif:</Text>
@@ -508,6 +602,53 @@ const HomeDriver = () => {
                     >
                       <Text style={styles.chatButtonIcon}></Text>
                       <Text style={styles.chatButtonText}>Chat dengan Customer</Text>
+                    </TouchableOpacity>
+
+                    {/* On Maps button - Send (changed to "selesai" -> PembayaranSend) */}
+                    <TouchableOpacity
+                      style={[styles.chatButton, { backgroundColor: '#0ea5a4', marginTop: 8 }]}
+                      onPress={async () => {
+                        try {
+                          const id = s.id_scoot_send;
+                          // Update service status
+                          const { error: updErr } = await supabase
+                            .from('scoot_send')
+                            .update({ status: 'done' })
+                            .eq('id_scoot_send', id);
+                          if (updErr) {
+                            console.error('❌ Update scoot_send status error:', updErr);
+                            Alert.alert('Error', 'Gagal menandai pesanan selesai. Coba lagi.');
+                            return;
+                          }
+
+                          // Insert into history_send
+                          const { error: histErr } = await supabase
+                            .from('history_send')
+                            .insert([{ id_scoot_send: id, status: 'done' }]);
+                          if (histErr) {
+                            console.warn('⚠️ history_send insert error:', histErr);
+                          } else {
+                            console.log('✅ history_send inserted for', id);
+                          }
+
+                          // Navigate to pembayaran
+                          router.push({
+                            pathname: '/screens/driverfix/ScootSendDriver/PembayaranSend',
+                            params: {
+                              orderId: String(id),
+                              origin: s.lokasi_jemput_barang,
+                              destination: s.lokasi_tujuan,
+                              ...userParams
+                            }
+                          });
+                        } catch (e) {
+                          console.error('❌ onPress selesai (send) error:', e);
+                          Alert.alert('Error', 'Gagal memproses. Coba lagi.');
+                        }
+                      }}
+                       activeOpacity={0.8}
+                    >
+                      <Text style={styles.chatButtonText}>selesai</Text>
                     </TouchableOpacity>
                   </View>
                 ))

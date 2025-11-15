@@ -80,6 +80,13 @@ const PageCustomer: React.FC = () => {
   const [loadingOrders, setLoadingOrders] = useState<boolean>(false);
   const [refreshing, setRefreshing] = useState<boolean>(false);
 
+  // toggle untuk tampilkan semua detail pesanan (replace halaman saat on)
+  const [showAllDetails, setShowAllDetails] = useState<boolean>(
+    (params as any)?.view === "details"
+  );
+  const [allOrders, setAllOrders] = useState<ActiveOrder[]>([]);
+  const [loadingAllOrders, setLoadingAllOrders] = useState<boolean>(false);
+
   // Modal states
   const [showModal, setShowModal] = useState<boolean>(false);
   const [modalType, setModalType] = useState<"ride" | "food" | "send" | null>(null);
@@ -219,14 +226,20 @@ const PageCustomer: React.FC = () => {
   }, [paramUserId, paramNama]);
 
   useEffect(() => {
-    if (userData?.id) {
-      loadActiveOrders();
-      const interval = setInterval(() => {
-        loadActiveOrders();
-      }, 30000);
-      return () => clearInterval(interval);
+    // sync initial view param -> showAllDetails
+    if ((params as any)?.view === "details") {
+      setShowAllDetails(true);
+    } else {
+      setShowAllDetails(false);
     }
-  }, [userData?.id]);
+     if (userData?.id) {
+       loadActiveOrders();
+       const interval = setInterval(() => {
+         loadActiveOrders();
+       }, 30000);
+       return () => clearInterval(interval);
+     }
+   }, [userData?.id]);
 
   const loadUserData = async (userId: string) => {
     try {
@@ -419,6 +432,103 @@ const PageCustomer: React.FC = () => {
     }
   };
 
+  // load only orders with status = "on progress" from each scoot_* table
+  const loadOnProgressOrders = async () => {
+    if (!userData?.id) return;
+    try {
+      setLoadingAllOrders(true);
+      const orders: ActiveOrder[] = [];
+
+      // Rides ON PROGRESS
+      const { data: rideOrders, error: rideErr } = await supabase
+        .from("scoot_ride")
+        .select("id_scoot_ride, lokasi_jemput, lokasi_tujuan, tarif, timestamp, status, id_driver")
+        .eq("id_customer", userData.id)
+        .eq("status", "on progress");
+      if (rideErr) console.warn("ride fetch:", rideErr);
+      if (rideOrders?.length) {
+        const driverIds = rideOrders.filter((o: any) => o.id_driver).map((o: any) => o.id_driver);
+        let driverMap: Record<string, string> = {};
+        if (driverIds.length) {
+          const { data: drivers } = await supabase.from("driver").select("id, nama").in("id", driverIds);
+          if (drivers) driverMap = drivers.reduce((acc: any, d: any) => ((acc[d.id] = d.nama), acc), {});
+        }
+        orders.push(...rideOrders.map((o: any) => ({
+          id: o.id_scoot_ride,
+          type: "ride" as const,
+          asal: o.lokasi_jemput || "-",
+          tujuan: o.lokasi_tujuan || "-",
+          harga: o.tarif || 0,
+          status: o.status || "on progress",
+          driver_nama: o.id_driver ? driverMap[o.id_driver] : undefined,
+          driver_id: o.id_driver,
+          timestamp: o.timestamp || new Date().toISOString(),
+        })));
+      }
+
+      // Foods ON PROGRESS
+      const { data: foodOrders, error: foodErr } = await supabase
+        .from("scoot_food")
+        .select("id_scoot_food, lokasi_resto, lokasi_tujuan, detail_pesanan, ongkir, timestamp, status, id_driver")
+        .eq("id_customer", userData.id)
+        .eq("status", "on progress");
+      if (foodErr) console.warn("food fetch:", foodErr);
+      if (foodOrders?.length) {
+        const driverIds = foodOrders.filter((o: any) => o.id_driver).map((o: any) => o.id_driver);
+        let driverMap: Record<string, string> = {};
+        if (driverIds.length) {
+          const { data: drivers } = await supabase.from("driver").select("id, nama").in("id", driverIds);
+          if (drivers) driverMap = drivers.reduce((acc: any, d: any) => ((acc[d.id] = d.nama), acc), {});
+        }
+        orders.push(...foodOrders.map((o: any) => ({
+          id: o.id_scoot_food,
+          type: "food" as const,
+          asal: o.lokasi_resto || "-",
+          tujuan: o.lokasi_tujuan || "-",
+          harga: o.ongkir || 0,
+          status: o.status || "on progress",
+          driver_nama: o.id_driver ? driverMap[o.id_driver] : undefined,
+          driver_id: o.id_driver,
+          timestamp: o.timestamp || new Date().toISOString(),
+        })));
+      }
+
+      // Sends ON PROGRESS
+      const { data: sendOrders, error: sendErr } = await supabase
+        .from("scoot_send")
+        .select("id_scoot_send, lokasi_jemput_barang, lokasi_tujuan, nama_penerima, nama_barang, berat, tarif, timestamp, status, id_driver")
+        .eq("id_customer", userData.id)
+        .eq("status", "on progress");
+      if (sendErr) console.warn("send fetch:", sendErr);
+      if (sendOrders?.length) {
+        const driverIds = sendOrders.filter((o: any) => o.id_driver).map((o: any) => o.id_driver);
+        let driverMap: Record<string, string> = {};
+        if (driverIds.length) {
+          const { data: drivers } = await supabase.from("driver").select("id, nama").in("id", driverIds);
+          if (drivers) driverMap = drivers.reduce((acc: any, d: any) => ((acc[d.id] = d.nama), acc), {});
+        }
+        orders.push(...sendOrders.map((o: any) => ({
+          id: o.id_scoot_send,
+          type: "send" as const,
+          asal: o.lokasi_jemput_barang || "-",
+          tujuan: o.lokasi_tujuan || "-",
+          harga: o.tarif || 0,
+          status: o.status || "on progress",
+          driver_nama: o.id_driver ? driverMap[o.id_driver] : undefined,
+          driver_id: o.id_driver,
+          timestamp: o.timestamp || new Date().toISOString(),
+        })));
+      }
+
+      orders.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setAllOrders(orders);
+    } catch (err) {
+      console.error("Error loadOnProgressOrders:", err);
+    } finally {
+      setLoadingAllOrders(false);
+    }
+  };
+
   // helper: reset form to initial empty values
   const resetForm = () => {
     setFormData({
@@ -576,26 +686,120 @@ const PageCustomer: React.FC = () => {
     }
   };
 
-  const handleOpenChat = (order: ActiveOrder) => {
-    if (!order.driver_id) {
-      Alert.alert("Info", "Pesanan belum diambil driver. Harap menunggu.");
-      return;
-    }
+  const handleOpenChatCustomer = async (order: ActiveOrder) => {
+    try {
+      // Ambil tipe order dari object order
+      let type = order.type;
+      let orderId = order.id;
 
-    console.log("📱 Opening chat for order:", order);
+      // Jika type tidak ada, deteksi dari database berdasarkan id
+      if (!type) {
+        // Cek di tabel scoot_ride
+        const { data: rideData } = await supabase
+          .from("scoot_ride")
+          .select("id_scoot_ride, id_driver")
+          .eq("id_scoot_ride", orderId)
+          .maybeSingle();
+        
+        if (rideData) {
+          type = "ride";
+        }
 
-    router.push({
-      pathname: "/screens/AmbilPesanan",
-      params: {
-        orderId: order.id.toString(),
-        serviceType: order.type,
+        // Cek di tabel scoot_food jika belum ketemu
+        if (!type) {
+          const { data: foodData } = await supabase
+            .from("scoot_food")
+            .select("id_scoot_food, id_driver")
+            .eq("id_scoot_food", orderId)
+            .maybeSingle();
+          
+          if (foodData) {
+            type = "food";
+          }
+        }
+
+        // Cek di tabel scoot_send jika belum ketemu
+        if (!type) {
+          const { data: sendData } = await supabase
+            .from("scoot_send")
+            .select("id_scoot_send, id_driver")
+            .eq("id_scoot_send", orderId)
+            .maybeSingle();
+          
+          if (sendData) {
+            type = "send";
+          }
+        }
+
+        if (!type) {
+          Alert.alert("Info", "Tipe pesanan tidak diketahui.");
+          return;
+        }
+      }
+
+      // Tentukan halaman chat berdasarkan tipe
+      let pathname = "";
+      if (type === "ride") {
+        pathname = "/screens/customerfix/ScootRideCust/ChatRideCust";
+      } else if (type === "food") {
+        pathname = "/screens/customerfix/ScootFoodCust/ChatFoodCust";
+      } else if (type === "send") {
+        pathname = "/screens/customerfix/ScootSendCust/ChatSendCust";
+      }
+
+      // Ambil driver_id jika belum ada
+      let driverId = order.driver_id;
+      if (!driverId) {
+        const tableName = 
+          type === "ride" ? "scoot_ride" : 
+          type === "food" ? "scoot_food" : 
+          "scoot_send";
+        
+        const idColumn = 
+          type === "ride" ? "id_scoot_ride" : 
+          type === "food" ? "id_scoot_food" : 
+          "id_scoot_send";
+
+        const { data } = await supabase
+          .from(tableName)
+          .select("id_driver")
+          .eq(idColumn, orderId)
+          .maybeSingle();
+        
+        driverId = data?.id_driver;
+      }
+
+      if (!driverId) {
+        Alert.alert("Info", "Driver belum ditugaskan. Harap menunggu.");
+        return;
+      }
+
+      // Navigate ke halaman chat dengan parameter lengkap
+      const params = {
+        orderId: String(orderId),
         customerId: userData?.id,
-        driverId: order.driver_id,
-        tujuan: order.tujuan,
-        asal: order.asal,
-        tarif: `Rp ${order.harga.toLocaleString()}`,
-      },
-    });
+        driverId,
+      };
+
+      router.push({ pathname, params } as any);
+    } catch (err) {
+      console.error("handleOpenChatCustomer error:", err);
+      Alert.alert("Error", "Gagal membuka chat. Coba lagi.");
+    }
+  };
+
+  // toggle handler: replace route and change view
+  const handleToggleAllDetails = async (value: boolean) => {
+    setShowAllDetails(value);
+    if (value) {
+      // replace current route with view=details
+      router.replace({ pathname: "/screens/customerfix/PageCustomer", params: { view: "details" } } as any);
+      await loadOnProgressOrders();
+    } else {
+      router.replace({ pathname: "/screens/customerfix/PageCustomer" } as any);
+      // revert to active orders
+      loadActiveOrders();
+    }
   };
 
   const getServiceIcon = (type: string) => {
@@ -607,6 +811,10 @@ const PageCustomer: React.FC = () => {
     }
   };
 
+  const getPrimaryLabel = (order: ActiveOrder) => {
+    return getServiceIcon(order.type);
+  };
+
   const getServiceName = (type: string) => {
     switch (type) {
       case "ride": return "ScootRide";
@@ -614,6 +822,24 @@ const PageCustomer: React.FC = () => {
       case "send": return "ScootSend";
       default: return "Pesanan";
     }
+  };
+
+  // Helper function untuk mendapatkan label kolom database
+  const getColumnLabel = (type: string, field: string): string => {
+    if (type === "ride") {
+      if (field === "asal") return "Lokasi Jemput";
+      if (field === "tujuan") return "Lokasi Tujuan";
+      if (field === "harga") return "Tarif";
+    } else if (type === "food") {
+      if (field === "asal") return "Lokasi Resto";
+      if (field === "tujuan") return "Lokasi Tujuan";
+      if (field === "harga") return "Ongkir";
+    } else if (type === "send") {
+      if (field === "asal") return "Lokasi Jemput Barang";
+      if (field === "tujuan") return "Lokasi Tujuan";
+      if (field === "harga") return "Tarif";
+    }
+    return field;
   };
 
   const getInitials = (name: string): string => {
@@ -851,7 +1077,6 @@ const PageCustomer: React.FC = () => {
       }
     >
       {/* HEADER USER INFO */}
-      {/* Redesigned header with profile image + preview + edit button */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.avatarContainer}
@@ -876,63 +1101,127 @@ const PageCustomer: React.FC = () => {
             <Text style={styles.editText}>Edit Profil</Text>
           </TouchableOpacity>
         </View>
+        {/* ON/OFF text to the right of profile (only text, clickable) */}
+        <TouchableOpacity onPress={() => handleToggleAllDetails(!showAllDetails)} activeOpacity={0.8} style={styles.toggleTextWrapper}>
+          <Text style={[styles.toggleTextRight, showAllDetails ? styles.toggleOnText : styles.toggleOffText]}>
+            {showAllDetails ? "ON" : "OFF"}
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      {/* ACTIVE ORDERS SECTION */}
-      {activeOrders.length > 0 && (
+      {/* ACTIVE ORDERS SECTION OR FULL DETAILS VIEW (toggled) */}
+      {showAllDetails ? (
         <View style={styles.activeOrdersSection}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>📦 Pesanan Aktif ({activeOrders.length})</Text>
-            <TouchableOpacity onPress={() => loadActiveOrders()}>
-              <Text style={styles.refreshBtn}>🔄</Text>
+            <Text style={styles.sectionTitle}>Semua Pesanan</Text>
+            <TouchableOpacity onPress={() => loadOnProgressOrders()}>
+              <Text style={styles.refreshBtn}>Refresh</Text>
             </TouchableOpacity>
           </View>
-
-          {loadingOrders ? (
+          {loadingAllOrders ? (
             <ActivityIndicator size="small" color="#10B981" style={{ marginVertical: 10 }} />
           ) : (
-            activeOrders.map((order) => (
-              <TouchableOpacity
-                key={`${order.type}-${order.id}`}
-                style={styles.orderCard}
-                onPress={() => handleOpenChat(order)}
-              >
+            allOrders.map((order) => (
+              <View key={`${order.type}-${order.id}`} style={styles.detailsCard}>
                 <View style={styles.orderHeader}>
-                  <Text style={styles.orderIcon}>{getServiceIcon(order.type)}</Text>
+                  <Text style={styles.orderIcon}>{getPrimaryLabel(order)}</Text>
                   <View style={styles.orderInfo}>
                     <Text style={styles.orderTitle}>
                       {getServiceName(order.type)} #{order.id}
                     </Text>
                     <Text style={styles.orderStatus}>{order.status}</Text>
                   </View>
-                  {order.driver_id && (
-                    <View style={styles.chatBadge}>
-                      <Text style={styles.chatBadgeText}>💬</Text>
-                    </View>
-                  )}
                 </View>
-
                 <View style={styles.orderDetails}>
                   <Text style={styles.orderLocation}>
-                    📍 {order.asal.length > 30 ? order.asal.substring(0, 30) + "..." : order.asal}
+                    {getColumnLabel(order.type, "asal")}: {order.asal}
                   </Text>
                   <Text style={styles.orderLocationTo}>
-                    🎯 {order.tujuan.length > 30 ? order.tujuan.substring(0, 30) + "..." : order.tujuan}
+                    {getColumnLabel(order.type, "tujuan")}: {order.tujuan}
                   </Text>
                   <Text style={styles.orderPrice}>
-                    💰 Rp {order.harga.toLocaleString()}
+                    {getColumnLabel(order.type, "harga")}: Rp {order.harga?.toLocaleString()}
                   </Text>
                   {order.driver_nama && (
-                    <Text style={styles.driverName}>🏍️ {order.driver_nama}</Text>
+                    <Text style={styles.driverName}>Driver: {order.driver_nama}</Text>
                   )}
+                  <Text style={styles.orderMeta}>Timestamp: {new Date(order.timestamp).toLocaleString()}</Text>
                 </View>
-              </TouchableOpacity>
+                {/* Chat only available when driver assigned / on progress */}
+                {order.driver_id && order.status && order.status.toLowerCase().includes("on progress") && (
+                  <TouchableOpacity style={styles.chatButtonOrder} onPress={() => handleOpenChatCustomer(order)}>
+                    <Text style={styles.chatButtonOrderText}>Chat Drivermu</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             ))
           )}
         </View>
+      ) : (
+        activeOrders.length > 0 && (
+          <View style={styles.activeOrdersSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Pesanan Aktif ({activeOrders.length})</Text>
+              <TouchableOpacity onPress={() => loadActiveOrders()}>
+                <Text style={styles.refreshBtn}>🔄</Text>
+              </TouchableOpacity>
+            </View>
+
+              {loadingOrders ? (
+              <ActivityIndicator size="small" color="#10B981" style={{ marginVertical: 10 }} />
+            ) : (
+              activeOrders.map((order) => (
+                <TouchableOpacity
+                  key={`${order.type}-${order.id}`}
+                  style={styles.orderCard}
+                  onPress={() => handleOpenChatCustomer(order)}
+                >
+                  <View style={styles.orderHeader}>
+                    <Text style={styles.orderIcon}>{getPrimaryLabel(order)}</Text>
+                    <View style={styles.orderInfo}>
+                      <Text style={styles.orderTitle}>
+                        {getServiceName(order.type)} #{order.id}
+                      </Text>
+                      <Text style={styles.orderStatus}>{order.status}</Text>
+                    </View>
+                    {order.driver_id && (
+                      <View style={styles.chatBadge}>
+                        <Text style={styles.chatBadgeText}>💬</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.orderDetails}>
+                    <Text style={styles.orderLocation}>
+                      {getColumnLabel(order.type, "asal")}: {order.asal.length > 30 ? order.asal.substring(0, 30) + "..." : order.asal}
+                    </Text>
+                    <Text style={styles.orderLocationTo}>
+                      {getColumnLabel(order.type, "tujuan")}: {order.tujuan.length > 30 ? order.tujuan.substring(0, 30) + "..." : order.tujuan}
+                    </Text>
+                    <Text style={styles.orderPrice}>
+                      {getColumnLabel(order.type, "harga")}: Rp {order.harga.toLocaleString()}
+                    </Text>
+                    {order.driver_nama && (
+                      <Text style={styles.driverName}>Driver: {order.driver_nama}</Text>
+                    )}
+                  </View>
+
+                  {order.driver_id && (
+                    <TouchableOpacity
+                      style={styles.chatButtonOrder}
+                      onPress={() => handleOpenChatCustomer(order)}
+                    >
+                      <Text style={styles.chatButtonOrderText}>Chat Drivermu</Text>
+                    </TouchableOpacity>
+                  )}
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        )
       )}
 
-      {/* Default UI cards like contoh Anda */}
+      {/* Default UI cards */}
       <View style={styles.content}>
         <Text style={styles.question}>Mau ngapain hari ini?</Text>
 
@@ -996,7 +1285,7 @@ const PageCustomer: React.FC = () => {
         style={styles.logoutButton}
         onPress={() => router.push("/screens/Logout")}
       >
-        <Text style={styles.logoutText}>🚪 Logout</Text>
+        <Text style={styles.logoutText}>Logout</Text>
       </TouchableOpacity>
 
       <View style={styles.spacer} />
@@ -1199,6 +1488,23 @@ const styles = StyleSheet.create({
     color: "white",
     fontWeight: "600",
     fontSize: 14,
+  },
+  toggleTextWrapper: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    alignSelf: "center",
+  },
+  toggleTextRight: {
+    fontWeight: "700",
+    fontSize: 16,
+    color: "#000000",
+  },
+  toggleOnText: {
+    color: "#000000",
+  },
+  toggleOffText: {
+    color: "#000000",
+    opacity: 0.5,
   },
   activeOrdersSection: {
     width: "100%",
@@ -1510,6 +1816,9 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.9)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   closeButton: {
     position: "absolute",
@@ -1529,9 +1838,38 @@ const styles = StyleSheet.create({
     color: "#EF4444",
   },
   previewImage: {
-    width: "100%",
-    height: "100%",
+    width: "90%",
+    height: "80%",
     borderRadius: 12,
+  },
+  // Chat button used in order items
+  chatButtonOrder: {
+    marginTop: 10,
+    backgroundColor: "#10B981",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chatButtonOrderText: {
+    color: "white",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  detailsCard: {
+    backgroundColor: "white",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    elevation: 3,
+    borderLeftWidth: 4,
+    borderLeftColor: "#059669",
+  },
+  orderMeta: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#6B7280",
   },
 });
 

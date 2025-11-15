@@ -18,8 +18,12 @@ import ScootFoodCust from '../screens/ScootFoodCust';
 import ScootRideCust from '../screens/ScootRideCust';
 import ScootSendCust from '../screens/ScootSendCust';
 import TestNavigationToChat from '../screens/TestNavigationToChat';
-
-
+import MapsFood from '../screens/driverfix/ScootFoodDriver/MapsFood';
+import MapsSend from '../screens/driverfix/ScootSendDriver/MapsSend';
+import MapsRide from '../screens/driverfix/ScootRideDriver/MapsRide';
+import PembayaranFood from '../screens/driverfix/ScootFoodDriver/PembayaranFood';
+import PembayaranRide from '../screens/driverfix/ScootRideDriver/PembayaranRide'; 
+import PembayaranSend from '../screens/driverfix/ScootSendDriver/PembayaranSend';
 
 const Stack = createNativeStackNavigator();
 
@@ -113,6 +117,41 @@ export default function StackNavigator() {
         options={{ headerShown: false }}
       />
 
+      <Stack.Screen 
+        name="MapsFood" 
+        component={MapsFood} 
+        options={{ headerShown: false }}
+      />
+
+      <Stack.Screen 
+        name="MapsSend" 
+        component={MapsSend} 
+        options={{ headerShown: false }}
+      />
+
+      <Stack.Screen 
+        name="MapsRide" 
+        component={MapsRide} 
+        options={{ headerShown: false }}
+      />
+
+      <Stack.Screen 
+        name="PembayaranFood" 
+        component={PembayaranFood} 
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen 
+        name="PembayaranRide" 
+        component={PembayaranRide}  
+        options={{ headerShown: false }}
+      />
+
+      <Stack.Screen 
+        name="PembayaranSend" 
+        component={PembayaranSend}  
+        options={{ headerShown: false }}
+      />
+      
       <Stack.Screen 
         name="types" 
         component={AmbilPesanan} 

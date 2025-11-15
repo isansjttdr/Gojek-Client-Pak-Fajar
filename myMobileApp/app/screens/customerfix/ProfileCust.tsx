@@ -159,6 +159,11 @@ const Profile: React.FC = () => {
   };
 
   const handleSaveProfile = async () => {
+    if (!userData?.role || !['customer', 'driver'].includes(userData.role)) {
+      Alert.alert('Error', 'Role tidak valid. Silakan login ulang.');
+      return;
+    }
+
     setSaving(true);
     try {
       // get auth user id
@@ -166,47 +171,45 @@ const Profile: React.FC = () => {
       const userId = authData?.user?.id;
 
       if (!userId) {
-        Alert.alert("Error", "User ID tidak ditemukan.");
-        setSaving(false);
-        return;
-      }
-
-      const payload = {
-        id: userId,
-        role: userData?.role || null,
-        nim: editNim.trim() || userData?.nim || null,
-        nama: editName.trim() || null,
-        foto_url: editPhotoUrl || userData?.foto_url || null,
-        updated_at: new Date().toISOString(),
-      };
-
-      // check existing profiles row
-      const { data: existing } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("id", userId)
-        .maybeSingle();
-
-      let result;
-      if (existing) {
-        result = await supabase.from("profiles").update(payload).eq("id", userId);
+        console.warn('⚠️ No auth user ID, skipping profiles insert');
+        // still update role table
       } else {
-        result = await supabase.from("profiles").insert([payload]);
-      }
-      if (result.error) throw result.error;
+        const payload = {
+          id: userId,
+          role: userData.role,
+          nim: editNim.trim() || userData.nim || null,
+          nama: editName.trim() || userData.nama || null,
+          foto_url: editPhotoUrl || userData.foto_url || null,
+          updated_at: new Date().toISOString(),
+        };
 
-      // also update name & nim in driver/customer table to keep in sync
-      const table = userData?.role === "driver" ? "driver" : "customer";
+        console.log('📤 Upserting profiles payload:', payload);
+
+        const { error } = await supabase
+          .from('profiles')
+          .upsert([payload], { onConflict: 'id' });
+
+        if (error) {
+          console.error('❌ Profiles upsert error:', error);
+          throw error;
+        }
+        console.log('✅ Profiles upsert successful');
+      }
+
+      // update name & nim in driver/customer table (required for persistence)
+      const table = userData.role === "driver" ? "driver" : "customer";
       const updateData: any = {};
       if (editName.trim()) updateData.nama = editName.trim();
       if (editNim.trim()) updateData.nim = editNim.trim();
 
       if (Object.keys(updateData).length > 0) {
-        const upd = await supabase.from(table).update(updateData).eq("id", userId);
+        console.log('📤 Updating role table:', table, updateData);
+        const upd = await supabase.from(table).update(updateData).eq("id", userData.id);
         if (upd.error) {
-          // log but not block
-          console.warn("Gagal update tabel role:", upd.error);
+          console.error('❌ Role table update error:', upd.error);
+          throw upd.error;
         }
+        console.log('✅ Role table update successful');
       }
 
       await loadUserData();

@@ -13,16 +13,67 @@ const AmbilScootRide = () => {
 
   const { orderId, pickup, destination, price, raw } = params;
 
-  const handleContact = () => {
-    router.push({
-      pathname: '/screens/driverfix/ScootRideDriver/HalamanChat_Ride_Driver',
-      params: {
-        customerName: 'Dwi Aruna Putri',
-        customerPhoto: '', // Kosong = akan pakai Passenger.png default
-        pickup: pickup,
-        destination: destination
+  const handleContact = async () => {
+    try {
+      let customerName = "Customer";
+
+      if (orderId) {
+        // try to get id_customer from scoot_ride
+        const idValue = isNaN(Number(orderId)) ? orderId : Number(orderId);
+        const { data: rideRow, error: rideErr } = await supabase
+          .from("scoot_ride")
+          .select("id_customer")
+          .eq("id_scoot_ride", idValue)
+          .maybeSingle();
+
+        if (rideErr) {
+          console.warn("⚠️ Error fetching scoot_ride:", rideErr);
+        } else if (rideRow && rideRow.id_customer) {
+          const identifier = String(rideRow.id_customer);
+
+          // if identifier looks like UUID -> query by id, else assume it's nim -> query by nim
+          if (identifier.includes("-")) {
+            const { data: cust, error: custErr } = await supabase
+              .from("customer")
+              .select("nama")
+              .eq("id", identifier)
+              .maybeSingle();
+            if (cust && cust.nama) customerName = cust.nama;
+            if (custErr) console.warn("⚠️ Error fetching customer by id:", custErr);
+          } else {
+            const { data: cust, error: custErr } = await supabase
+              .from("customer")
+              .select("nama")
+              .eq("nim", identifier)
+              .maybeSingle();
+            if (cust && cust.nama) customerName = cust.nama;
+            if (custErr) console.warn("⚠️ Error fetching customer by nim:", custErr);
+          }
+        }
       }
-    });
+      // navigate to chat page with resolved customerName (photo left empty for default)
+      router.push({
+        pathname: "/screens/driverfix/ScootRideDriver/HalamanChat_Ride_Driver",
+        params: {
+          customerName,
+          customerPhoto: "",
+          pickup: pickup,
+          destination: destination,
+        },
+      });
+    } catch (err) {
+      console.error("❌ handleContact error:", err);
+      // fallback navigation with default name
+      router.push({
+        pathname: "/screens/driverfix/ScootRideDriver/HalamanChat_Ride_Driver",
+        params: {
+          customerName: "Customer",
+          customerPhoto: "",
+          pickup: pickup,
+          destination: destination,
+        },
+      });
+    }
   };
 
   const handleAmbilOrder = async () => {
