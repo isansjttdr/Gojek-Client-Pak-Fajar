@@ -1,55 +1,60 @@
 import * as Linking from "expo-linking";
 import React, { useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
-/**
- * PembayaranRide.tsx
- *
- * - UI: masukkan nominal -> minta payment_url ke backend -> tampilkan QR.
- * - Backend expected endpoints (implement di server Anda):
- *   POST /api/createPayment
- *     body: { orderId, amount, service: 'Ride' }
- *     response: { payment_url, payment_id }
- *
- *   GET /api/paymentStatus?payment_id=...
- *     response: { status: 'pending'|'paid'|'failed' }
- *
- * - Install dependency: react-native-qrcode-svg
- *   npm install react-native-qrcode-svg
- *
- * - Jangan ubah file lain. Sesuaikan endpoint backend sesuai environment Anda.
- */
+import { StackActions, useNavigation } from "@react-navigation/native";
+import Constants from "expo-constants";
+import QRCode from "react-native-qrcode-svg";
 
 interface CreatePaymentResp {
-  payment_url: string;
-  payment_id?: string;
+  qr_url: string;
+  id: number;
+  status: string;
 }
 
 const PembayaranRide: React.FC = () => {
+  const navigation = useNavigation();
+
   const [amount, setAmount] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
-  const [paymentId, setPaymentId] = useState<string | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null); 
   const [status, setStatus] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-      }
+      if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    setQrDataUrl(null);
+
+    if (Platform.OS === "web" && qrUrl) {
+      import("qrcode")
+        .then((qrcode) => qrcode.toDataURL(qrUrl))
+        .then((dataUrl: string) => {
+          if (mounted) setQrDataUrl(dataUrl);
+        })
+        .catch(() => setQrDataUrl(null));
+    }
+
+    return () => {
+      mounted = false;
+    };
+  }, [qrUrl]);
 
   const createPayment = async () => {
     const amt = parseFloat(amount);
@@ -61,35 +66,44 @@ const PembayaranRide: React.FC = () => {
     setLoading(true);
     setQrUrl(null);
     setStatus(null);
-    setPaymentId(null);
 
     try {
-      // Ganti URL ini ke backend Anda yang akan memanggil Payment Gateway (Midtrans/Xendit/...)
-      const res = await fetch("https://YOUR_BACKEND_DOMAIN/api/createPayment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderId: "ORDER_ID_PLACEHOLDER", // ganti sesuai context/params
-          amount: amt,
-          service: "Ride",
-        }),
-      });
+      // ambil kunci Supabase dari expo constants / env (fallback placeholder)
+      const SUPABASE_KEY =
+        Constants.expoConfig?.extra?.SUPABASE_ANON_KEY ||
+        process.env.SUPABASE_ANON_KEY ||
+        "<YOUR_SUPABASE_ANON_KEY>";
+
+      const res = await fetch(
+        "https://lhdpyvrihbrgrfdqakie.supabase.co/functions/v1/bright-action",
+        {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${SUPABASE_KEY}`,
+            "apikey": SUPABASE_KEY,
+          },
+          body: JSON.stringify({
+            order_type: "ride",
+            order_id: 10, 
+            jumlah: amt,
+          }),
+        }
+      );
 
       if (!res.ok) {
-        const text = await res.text();
-        console.error("createPayment failed:", res.status, text);
-        throw new Error("Gagal membuat permintaan pembayaran");
+        const json = await res.json();
+        console.error("createPayment failed:", res.status, json);
+        throw new Error(json.error || json.details || "Gagal membuat pembayaran");
       }
 
       const json: CreatePaymentResp = await res.json();
-      if (!json.payment_url) throw new Error("payment_url tidak diterima dari server");
 
-      setQrUrl(json.payment_url);
-      if (json.payment_id) setPaymentId(json.payment_id);
-      setStatus("pending");
+      setQrUrl(json.qr_url);
+      setStatus(json.status);
 
-      // start polling payment status if payment_id provided
-      if (json.payment_id) startPolling(json.payment_id);
+      startPolling(json.id);
+
     } catch (err: any) {
       console.error("createPayment error:", err);
       Alert.alert("Error", err?.message || "Gagal membuat pembayaran");
@@ -98,40 +112,47 @@ const PembayaranRide: React.FC = () => {
     }
   };
 
-  const startPolling = (pid: string) => {
+  const startPolling = (paymentId: number) => {
     if (pollRef.current) clearInterval(pollRef.current);
+
     pollRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`https://YOUR_BACKEND_DOMAIN/api/paymentStatus?payment_id=${encodeURIComponent(pid)}`);
-        if (!res.ok) {
-          console.warn("paymentStatus non-ok", res.status);
-          return;
-        }
+        const res = await fetch(
+          `https://lhdpyvrihbrgrfdqakie.supabase.co/functions/v1/payment-status?payment_id=${paymentId}`
+        );
+
+        if (!res.ok) return;
+
         const j = await res.json();
-        const st = String(j.status || "").toLowerCase();
+        const st = j.status?.toLowerCase();
         setStatus(st);
+
         if (st === "paid" || st === "failed") {
-          if (pollRef.current) clearInterval(pollRef.current);
+          clearInterval(pollRef.current!);
           pollRef.current = null;
+
           if (st === "paid") {
-            Alert.alert("Pembayaran berhasil", "Terima kasih, pembayaran terkonfirmasi.");
-            // Здесь можно navigate ke halaman success / selesai / close
+            navigation.dispatch(
+              StackActions.replace("PembayaranSukses", {
+                paymentId,
+                amount,
+              })
+            );
           } else {
-            Alert.alert("Pembayaran gagal", "Silakan coba lagi atau hubungi dukungan.");
+            Alert.alert("Gagal", "Pembayaran gagal.");
           }
         }
       } catch (e) {
-        console.warn("polling error", e);
+        console.warn("polling error:", e);
       }
     }, 3000);
   };
 
   const openInBrowser = () => {
     if (!qrUrl) return;
-    Linking.openURL(qrUrl).catch((e) => {
-      console.warn("openURL failed", e);
-      Alert.alert("Error", "Gagal membuka link pembayaran");
-    });
+    Linking.openURL(qrUrl).catch(() =>
+      Alert.alert("Error", "Gagal membuka link pembayaran")
+    );
   };
 
   return (
@@ -147,42 +168,47 @@ const PembayaranRide: React.FC = () => {
         style={styles.input}
       />
 
-      <TouchableOpacity style={styles.actionBtn} onPress={createPayment} disabled={loading}>
-        {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionText}>Buat QR Pembayaran</Text>}
+      <TouchableOpacity
+        style={styles.actionBtn}
+        onPress={createPayment}
+        disabled={loading}
+      >
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.actionText}>Buat QR Pembayaran</Text>
+        )}
       </TouchableOpacity>
 
       {qrUrl ? (
         <View style={styles.qrContainer}>
-          <Text style={styles.info}>Status: {status}</Text>
+          <Text style={styles.info}>Status: {status || "pending"}</Text>
 
           <View style={styles.qrBox}>
             {Platform.OS === "web" ? (
-              // web: show link
-              <TouchableOpacity onPress={openInBrowser}>
-                <Text style={styles.link}>{qrUrl}</Text>
-              </TouchableOpacity>
+              qrDataUrl ? (
+                <Image source={{ uri: qrDataUrl }} style={{ width: 220, height: 220 }} />
+              ) : (
+                <TouchableOpacity onPress={openInBrowser}>
+                  <Text style={styles.link}>{qrUrl}</Text>
+                </TouchableOpacity>
+              )
             ) : (
-              // native: render QR as an image from a public QR service (no extra native deps)
-              <Image
-                source={{
-                  uri: `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
-                    qrUrl || ""
-                  )}`,
-                }}
-                style={{ width: 220, height: 220 }}
-                resizeMode="contain"
-              />
+              <QRCode value={qrUrl} size={220} />
             )}
           </View>
 
-          <TouchableOpacity style={[styles.actionBtn, { backgroundColor: "#0b74ff", marginTop: 12 }]} onPress={openInBrowser}>
+          <TouchableOpacity
+            style={[styles.actionBtn, { backgroundColor: "#0b74ff", marginTop: 12 }]}
+            onPress={openInBrowser}
+          >
             <Text style={styles.actionText}>Buka di Browser</Text>
           </TouchableOpacity>
         </View>
       ) : null}
 
       <Text style={styles.hint}>
-        Catatan: QR bersifat dinamis. Backend harus memanggil payment gateway dan mengembalikan payment_url serta payment_id (opsional) untuk polling.
+        QR dinamis. Backend akan mengembalikan qr_url dan status akan dipantau otomatis.
       </Text>
     </View>
   );

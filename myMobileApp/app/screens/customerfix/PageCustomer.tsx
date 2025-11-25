@@ -109,6 +109,10 @@ const PageCustomer: React.FC = () => {
   });
   const [submitting, setSubmitting] = useState<boolean>(false);
 
+  // NEW: States for price calculation
+  const [checkingPrice, setCheckingPrice] = useState<boolean>(false);
+  const [calculatedDistance, setCalculatedDistance] = useState<number | null>(null);
+
   useEffect(() => {
     if (paramUserId) {
       setUserData({
@@ -171,8 +175,6 @@ const PageCustomer: React.FC = () => {
         }
 
         if (event === "INITIAL_SESSION") {
-          // INITIAL_SESSION may arrive with undefined session in some envs.
-          // Try again to get session and fallback to AsyncStorage if needed.
           const s = await tryGetSessionWithRetry(2000);
           if (s?.user?.id) {
             await loadUserData(s.user.id);
@@ -191,7 +193,6 @@ const PageCustomer: React.FC = () => {
           } catch (e) {
             /* ignore */
           }
-          // If still nothing, mark loading false to allow UI to render
           setLoading(false);
         }
 
@@ -206,9 +207,7 @@ const PageCustomer: React.FC = () => {
         }
       });
 
-      // store subscription for cleanup
       subscription = listener?.subscription ?? listener;
-      // if no event fired in a short time, stop loading so UI isn't stuck
       setTimeout(() => {
         if (!userData?.id) setLoading(false);
       }, 1500);
@@ -226,7 +225,6 @@ const PageCustomer: React.FC = () => {
   }, [paramUserId, paramNama]);
 
   useEffect(() => {
-    // sync initial view param -> showAllDetails
     if ((params as any)?.view === "details") {
       setShowAllDetails(true);
     } else {
@@ -243,7 +241,7 @@ const PageCustomer: React.FC = () => {
 
   const loadUserData = async (userId: string) => {
     try {
-      console.log("📝 Loading user data for:", userId);
+      console.log("📥 Loading user data for:", userId);
 
       const { data: customerData, error } = await supabase
         .from("customer")
@@ -432,7 +430,6 @@ const PageCustomer: React.FC = () => {
     }
   };
 
-  // load only orders with status = "on progress" from each scoot_* table
   const loadOnProgressOrders = async () => {
     if (!userData?.id) return;
     try {
@@ -529,25 +526,20 @@ const PageCustomer: React.FC = () => {
     }
   };
 
-  // helper: reset form to initial empty values
   const resetForm = () => {
     setFormData({
-      // ScootRide
       lokasi_jemput: "",
       lokasi_tujuan: "",
       tarif: "",
-      
-      // ScootFood
       lokasi_resto: "",
       detail_pesanan: "",
       ongkir: "",
-      
-      // ScootSend
       lokasi_jemput_barang: "",
       nama_penerima: "",
       berat: "",
       nama_barang: "",
     });
+    setCalculatedDistance(null);
   };
 
   const handleOpenServiceModal = (type: "ride" | "food" | "send") => {
@@ -556,7 +548,76 @@ const PageCustomer: React.FC = () => {
     setShowModal(true);
   };
 
-  // Submit handler dengan validasi sesuai skema database
+  // NEW: Calculate price function using Google Maps Distance Matrix API
+  const calculatePrice = async () => {
+    let origin = "";
+    let destination = "";
+
+    // Tentukan origin dan destination berdasarkan tipe layanan
+    if (modalType === "ride") {
+      origin = formData.lokasi_jemput;
+      destination = formData.lokasi_tujuan;
+    } else if (modalType === "food") {
+      origin = formData.lokasi_resto;
+      destination = formData.lokasi_tujuan;
+    } else if (modalType === "send") {
+      origin = formData.lokasi_jemput_barang;
+      destination = formData.lokasi_tujuan;
+    }
+
+    // Validasi input
+    if (!origin?.trim() || !destination?.trim()) {
+      Alert.alert("Error", "Harap isi lokasi asal dan tujuan terlebih dahulu!");
+      return;
+    }
+
+    setCheckingPrice(true);
+
+    try {
+      // Menggunakan Google Maps Distance Matrix API
+      // IMPORTANT: Replace 'YOUR_GOOGLE_MAPS_API_KEY' with your actual API key
+      const gUrl = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(
+        origin
+      )}&destinations=${encodeURIComponent(destination)}&key=YOUR_GOOGLE_MAPS_API_KEY`;
+
+      const response = await fetch(gUrl);
+      const data = await response.json();
+
+      if (data.status === "OK" && data.rows[0]?.elements[0]?.distance) {
+        const distanceMeters = data.rows[0].elements[0].distance.value;
+        const distanceKm = parseFloat((distanceMeters / 1000).toFixed(2));
+
+        // Hitung tarif: Rp 1.000 per km, dibulatkan ke atas
+        const calculatedPrice = Math.ceil(distanceKm * 1000);
+
+        setCalculatedDistance(distanceKm);
+
+        // Update tarif/ongkir sesuai tipe layanan
+        if (modalType === "ride" || modalType === "send") {
+          setFormData({ ...formData, tarif: String(calculatedPrice) });
+        } else if (modalType === "food") {
+          setFormData({ ...formData, ongkir: String(calculatedPrice) });
+        }
+
+        Alert.alert(
+          "Harga Berhasil Dihitung",
+          `Jarak: ${distanceKm} km\nTarif: Rp ${calculatedPrice.toLocaleString()}\n\n(@ Rp 1.000/km)`
+        );
+      } else {
+        // Fallback jika API gagal
+        Alert.alert(
+          "Info",
+          "Tidak dapat menghitung jarak. Silakan masukkan tarif manual."
+        );
+      }
+    } catch (error) {
+      console.error("Error calculating price:", error);
+      Alert.alert("Error", "Gagal menghitung harga. Silakan coba lagi.");
+    } finally {
+      setCheckingPrice(false);
+    }
+  };
+
   const handleSubmitOrder = async () => {
     if (!userData?.id || !modalType) return;
 
@@ -571,7 +632,7 @@ const PageCustomer: React.FC = () => {
         return;
       }
       if (!formData.tarif?.trim()) {
-        Alert.alert("Error", "Tarif harus diisi");
+        Alert.alert("Error", "Tarif harus diisi. Klik 'Cek Harga' untuk menghitung.");
         return;
       }
     } else if (modalType === "food") {
@@ -584,7 +645,7 @@ const PageCustomer: React.FC = () => {
         return;
       }
       if (!formData.ongkir?.trim()) {
-        Alert.alert("Error", "Ongkir harus diisi");
+        Alert.alert("Error", "Ongkir harus diisi. Klik 'Cek Harga' untuk menghitung.");
         return;
       }
     } else if (modalType === "send") {
@@ -597,7 +658,7 @@ const PageCustomer: React.FC = () => {
         return;
       }
       if (!formData.tarif?.trim()) {
-        Alert.alert("Error", "Tarif harus diisi");
+        Alert.alert("Error", "Tarif harus diisi. Klik 'Cek Harga' untuk menghitung.");
         return;
       }
     }
@@ -673,7 +734,6 @@ const PageCustomer: React.FC = () => {
 
       setActiveOrders((prev) => [newOrder, ...prev]);
 
-      // Reset form dan tutup modal
       resetForm();
       setShowModal(false);
 
@@ -688,13 +748,10 @@ const PageCustomer: React.FC = () => {
 
   const handleOpenChatCustomer = async (order: ActiveOrder) => {
     try {
-      // Ambil tipe order dari object order
       let type = order.type;
       let orderId = order.id;
 
-      // Jika type tidak ada, deteksi dari database berdasarkan id
       if (!type) {
-        // Cek di tabel scoot_ride
         const { data: rideData } = await supabase
           .from("scoot_ride")
           .select("id_scoot_ride, id_driver")
@@ -705,7 +762,6 @@ const PageCustomer: React.FC = () => {
           type = "ride";
         }
 
-        // Cek di tabel scoot_food jika belum ketemu
         if (!type) {
           const { data: foodData } = await supabase
             .from("scoot_food")
@@ -718,7 +774,6 @@ const PageCustomer: React.FC = () => {
           }
         }
 
-        // Cek di tabel scoot_send jika belum ketemu
         if (!type) {
           const { data: sendData } = await supabase
             .from("scoot_send")
@@ -737,7 +792,6 @@ const PageCustomer: React.FC = () => {
         }
       }
 
-      // Tentukan halaman chat berdasarkan tipe
       let pathname = "";
       if (type === "ride") {
         pathname = "/screens/customerfix/ScootRideCust/ChatRideCust";
@@ -747,7 +801,6 @@ const PageCustomer: React.FC = () => {
         pathname = "/screens/customerfix/ScootSendCust/ChatSendCust";
       }
 
-      // Ambil driver_id jika belum ada
       let driverId = order.driver_id;
       if (!driverId) {
         const tableName = 
@@ -774,7 +827,6 @@ const PageCustomer: React.FC = () => {
         return;
       }
 
-      // Navigate ke halaman chat dengan parameter lengkap
       const params = {
         orderId: String(orderId),
         customerId: userData?.id,
@@ -788,26 +840,23 @@ const PageCustomer: React.FC = () => {
     }
   };
 
-  // toggle handler: replace route and change view
   const handleToggleAllDetails = async (value: boolean) => {
     setShowAllDetails(value);
     if (value) {
-      // replace current route with view=details
       router.replace({ pathname: "/screens/customerfix/PageCustomer", params: { view: "details" } } as any);
       await loadOnProgressOrders();
     } else {
       router.replace({ pathname: "/screens/customerfix/PageCustomer" } as any);
-      // revert to active orders
       loadActiveOrders();
     }
   };
 
   const getServiceIcon = (type: string) => {
     switch (type) {
-      case "ride": return "🏍️";
+      case "ride": return "🛵";
       case "food": return "🍔";
       case "send": return "📦";
-      default: return "📦";
+      default: return "📋";
     }
   };
 
@@ -824,7 +873,6 @@ const PageCustomer: React.FC = () => {
     }
   };
 
-  // Helper function untuk mendapatkan label kolom database
   const getColumnLabel = (type: string, field: string): string => {
     if (type === "ride") {
       if (field === "asal") return "Lokasi Jemput";
@@ -892,14 +940,33 @@ const PageCustomer: React.FC = () => {
               />
             </View>
 
+            {/* NEW: Tombol Cek Harga */}
+            <TouchableOpacity
+              style={styles.checkPriceButton}
+              onPress={calculatePrice}
+              disabled={checkingPrice}
+            >
+              {checkingPrice ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <View style={styles.checkPriceContent}>
+                  <Text style={styles.checkPriceButtonText}>🧮 Cek Harga</Text>
+                  {calculatedDistance && (
+                    <Text style={styles.distanceText}>
+                      ({calculatedDistance} km)
+                    </Text>
+                  )}
+                </View>
+              )}
+            </TouchableOpacity>
+
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>💰 Tarif (Rp)</Text>
               <TextInput
-                style={styles.input}
-                placeholder="Contoh: 15000"
+                style={[styles.input, styles.inputDisabled]}
+                placeholder="Klik 'Cek Harga' untuk menghitung"
                 value={formData.tarif}
-                onChangeText={(text) => setFormData({...formData, tarif: text})}
-                keyboardType="numeric"
+                editable={false}
                 placeholderTextColor="#9CA3AF"
               />
             </View>
@@ -921,7 +988,7 @@ const PageCustomer: React.FC = () => {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>📍 Lokasi Tujuan</Text>
+              <Text style={styles.inputLabel}>🎯 Lokasi Tujuan</Text>
               <TextInput
                 style={styles.input}
                 placeholder="Contoh: Jl. Sudirman No. 1"
@@ -930,6 +997,26 @@ const PageCustomer: React.FC = () => {
                 placeholderTextColor="#9CA3AF"
               />
             </View>
+
+            {/* NEW: Tombol Cek Harga */}
+            <TouchableOpacity
+              style={styles.checkPriceButton}
+              onPress={calculatePrice}
+              disabled={checkingPrice}
+            >
+              {checkingPrice ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <View style={styles.checkPriceContent}>
+                  <Text style={styles.checkPriceButtonText}>🧮 Cek Harga</Text>
+                  {calculatedDistance && (
+                    <Text style={styles.distanceText}>
+                      ({calculatedDistance} km)
+                    </Text>
+                  )}
+                </View>
+              )}
+            </TouchableOpacity>
 
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>📝 Detail Pesanan</Text>
@@ -947,11 +1034,10 @@ const PageCustomer: React.FC = () => {
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>💰 Ongkir (Rp)</Text>
               <TextInput
-                style={styles.input}
-                placeholder="Contoh: 10000"
+                style={[styles.input, styles.inputDisabled]}
+                placeholder="Klik 'Cek Harga' untuk menghitung"
                 value={formData.ongkir}
-                onChangeText={(text) => setFormData({...formData, ongkir: text})}
-                keyboardType="numeric"
+                editable={false}
                 placeholderTextColor="#9CA3AF"
               />
             </View>
@@ -962,7 +1048,7 @@ const PageCustomer: React.FC = () => {
         {modalType === "send" && (
           <>
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>📍 Lokasi Jemput Barang</Text>
+              <Text style={styles.inputLabel}>📦 Lokasi Jemput Barang</Text>
               <TextInput
                 style={styles.input}
                 placeholder="Contoh: Jl. Sudirman No. 1"
@@ -983,14 +1069,33 @@ const PageCustomer: React.FC = () => {
               />
             </View>
 
+            {/* NEW: Tombol Cek Harga */}
+            <TouchableOpacity
+              style={styles.checkPriceButton}
+              onPress={calculatePrice}
+              disabled={checkingPrice}
+            >
+              {checkingPrice ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <View style={styles.checkPriceContent}>
+                  <Text style={styles.checkPriceButtonText}>🧮 Cek Harga</Text>
+                  {calculatedDistance && (
+                    <Text style={styles.distanceText}>
+                      ({calculatedDistance} km)
+                    </Text>
+                  )}
+                </View>
+              )}
+            </TouchableOpacity>
+
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>💰 Tarif (Rp)</Text>
               <TextInput
-                style={styles.input}
-                placeholder="Contoh: 20000"
+                style={[styles.input, styles.inputDisabled]}
+                placeholder="Klik 'Cek Harga' untuk menghitung"
                 value={formData.tarif}
-                onChangeText={(text) => setFormData({...formData, tarif: text})}
-                keyboardType="numeric"
+                editable={false}
                 placeholderTextColor="#9CA3AF"
               />
             </View>
@@ -1019,7 +1124,7 @@ const PageCustomer: React.FC = () => {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>📦 Nama Barang (Opsional)</Text>
+              <Text style={styles.inputLabel}>📋 Nama Barang (Opsional)</Text>
               <TextInput
                 style={[styles.input, styles.textArea]}
                 placeholder="Contoh: Paket elektronik"
@@ -1101,7 +1206,6 @@ const PageCustomer: React.FC = () => {
             <Text style={styles.editText}>Edit Profil</Text>
           </TouchableOpacity>
         </View>
-        {/* ON/OFF text to the right of profile (only text, clickable) */}
         <TouchableOpacity onPress={() => handleToggleAllDetails(!showAllDetails)} activeOpacity={0.8} style={styles.toggleTextWrapper}>
           <Text style={[styles.toggleTextRight, showAllDetails ? styles.toggleOnText : styles.toggleOffText]}>
             {showAllDetails ? "ON" : "OFF"}
@@ -1109,7 +1213,7 @@ const PageCustomer: React.FC = () => {
         </TouchableOpacity>
       </View>
 
-      {/* ACTIVE ORDERS SECTION OR FULL DETAILS VIEW (toggled) */}
+      {/* ACTIVE ORDERS SECTION OR FULL DETAILS VIEW */}
       {showAllDetails ? (
         <View style={styles.activeOrdersSection}>
           <View style={styles.sectionHeader}>
@@ -1147,7 +1251,6 @@ const PageCustomer: React.FC = () => {
                   )}
                   <Text style={styles.orderMeta}>Timestamp: {new Date(order.timestamp).toLocaleString()}</Text>
                 </View>
-                {/* Chat only available when driver assigned / on progress */}
                 {order.driver_id && order.status && order.status.toLowerCase().includes("on progress") && (
                   <TouchableOpacity style={styles.chatButtonOrder} onPress={() => handleOpenChatCustomer(order)}>
                     <Text style={styles.chatButtonOrderText}>Chat Drivermu</Text>
@@ -1167,7 +1270,7 @@ const PageCustomer: React.FC = () => {
               </TouchableOpacity>
             </View>
 
-              {loadingOrders ? (
+            {loadingOrders ? (
               <ActivityIndicator size="small" color="#10B981" style={{ marginVertical: 10 }} />
             ) : (
               activeOrders.map((order) => (
@@ -1236,7 +1339,7 @@ const PageCustomer: React.FC = () => {
           <View style={styles.cardTextContainer}>
             <Text style={styles.cardTitle}>ScootRide</Text>
             <Text style={styles.cardDesc}>Nebeng cepat, aman, dan</Text>
-            <Text style={styles.cardDesc}>santai 😎</Text>
+            <Text style={styles.cardDesc}>santai 🛵</Text>
           </View>
           <View style={styles.arrowButton}>
             <Text style={styles.arrowText}>→</Text>
@@ -1254,7 +1357,7 @@ const PageCustomer: React.FC = () => {
           <View style={styles.cardTextContainer}>
             <Text style={styles.cardTitle}>ScootFood</Text>
             <Text style={styles.cardDesc}>Antar makanan dengan</Text>
-            <Text style={styles.cardDesc}>mudah 😋</Text>
+            <Text style={styles.cardDesc}>mudah 🍔</Text>
           </View>
           <View style={styles.arrowButton}>
             <Text style={styles.arrowText}>→</Text>
@@ -1388,7 +1491,7 @@ const PageCustomer: React.FC = () => {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {modalType === "ride" && "🏍️ Pesan ScootRide"}
+                {modalType === "ride" && "🛵 Pesan ScootRide"}
                 {modalType === "food" && "🍔 Pesan ScootFood"}
                 {modalType === "send" && "📦 Pesan ScootSend"}
               </Text>
@@ -1768,10 +1871,45 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
+  inputDisabled: {
+    backgroundColor: "#E5E7EB",
+    color: "#6B7280",
+  },
   textArea: {
     minHeight: 80,
     textAlignVertical: "top",
     paddingTop: 12,
+  },
+  // NEW: Styles for Check Price Button
+  checkPriceButton: {
+    backgroundColor: "#10B981",
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    marginBottom: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  checkPriceContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  checkPriceButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  distanceText: {
+    color: "white",
+    fontSize: 12,
+    fontWeight: "500",
+    opacity: 0.9,
   },
   modalButtons: {
     flexDirection: "row",

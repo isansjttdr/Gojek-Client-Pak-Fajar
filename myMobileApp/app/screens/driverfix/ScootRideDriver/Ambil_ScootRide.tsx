@@ -162,6 +162,16 @@ const AmbilScootRide = () => {
           <TouchableOpacity 
             style={[styles.button, styles.onMapsButton]}
             activeOpacity={0.8}
+            onPress={() =>
+              router.push({
+                pathname: '/screens/driverfix/ScootRideDriver/MapsRide',
+                params: {
+                  orderId,
+                  pickup,
+                  destination
+                }
+              })
+            }
           >
             <Text style={styles.buttonText}>On Maps</Text>
           </TouchableOpacity>

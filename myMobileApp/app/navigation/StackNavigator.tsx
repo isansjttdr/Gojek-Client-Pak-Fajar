@@ -1,5 +1,6 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import React from 'react';
+import { Platform } from "react-native";
 
 // 💡 PERBAIKAN PATH: Mundur satu tingkat (../)
 // 💡 PERBAIKAN NAMA: Menggunakan nama file yang sesuai (Login, Register, HomeScreen)
@@ -12,7 +13,6 @@ import Term from '../screens/customerfix/TermCust';
 import Home from '../screens/Home';
 import Login from '../screens/Login';
 import Logout from '../screens/Logout';
-import PageDriver from '../screens/PageDriver';
 import Register from '../screens/Register';
 import ScootFoodCust from '../screens/ScootFoodCust';
 import ScootRideCust from '../screens/ScootRideCust';
@@ -20,10 +20,10 @@ import ScootSendCust from '../screens/ScootSendCust';
 import TestNavigationToChat from '../screens/TestNavigationToChat';
 import MapsFood from '../screens/driverfix/ScootFoodDriver/MapsFood';
 import MapsSend from '../screens/driverfix/ScootSendDriver/MapsSend';
-import MapsRide from '../screens/driverfix/ScootRideDriver/MapsRide';
 import PembayaranFood from '../screens/driverfix/ScootFoodDriver/PembayaranFood';
 import PembayaranRide from '../screens/driverfix/ScootRideDriver/PembayaranRide'; 
 import PembayaranSend from '../screens/driverfix/ScootSendDriver/PembayaranSend';
+import MapsRide from '../screens/driverfix/ScootRideDriver/MapsRide';
 
 const Stack = createNativeStackNavigator();
 
@@ -80,11 +80,6 @@ export default function StackNavigator() {
         component={Logout}
         options={{ headerShown: false }}
       />
-      <Stack.Screen 
-        name="PageDriver"
-        component={PageDriver}
-        options={{ headerShown: false }}
-      />
 
 
       <Stack.Screen 
@@ -130,12 +125,6 @@ export default function StackNavigator() {
       />
 
       <Stack.Screen 
-        name="MapsRide" 
-        component={MapsRide} 
-        options={{ headerShown: false }}
-      />
-
-      <Stack.Screen 
         name="PembayaranFood" 
         component={PembayaranFood} 
         options={{ headerShown: false }}
@@ -149,6 +138,12 @@ export default function StackNavigator() {
       <Stack.Screen 
         name="PembayaranSend" 
         component={PembayaranSend}  
+        options={{ headerShown: false }}
+      />
+      
+      <Stack.Screen 
+        name="MapsRide" 
+        component={MapsRide} 
         options={{ headerShown: false }}
       />
       

@@ -279,39 +279,84 @@ const Profile: React.FC = () => {
   };
 
   // <-- ADDED: centralized sign out handler
-  const handleSignOut = async () => {
-    Alert.alert(
-      "Sign Out",
-      "Apakah Anda yakin ingin keluar?",
-      [
-        { text: "Batal", style: "cancel" },
-        {
-          text: "Ya, Keluar",
-          onPress: async () => {
+// <-- IMPROVED: centralized sign out handler with better error handling
+// <-- IMPROVED: centralized sign out handler with better error handling
+const handleSignOut = async () => {
+  Alert.alert(
+    "Sign Out",
+    "Apakah Anda yakin ingin keluar?",
+    [
+      { text: "Batal", style: "cancel" },
+      {
+        text: "Ya, Keluar",
+        onPress: async () => {
+          try {
+            console.log("🚪 Starting sign out process...");
+            
+            // 1. Sign out from Supabase auth (non-blocking)
             try {
-              // sign out Supabase auth session (if any)
-              try {
-                await supabase.auth.signOut();
-              } catch (e) {
-                // non-fatal — continue clearing local session
-                console.warn("Supabase signOut error:", e);
+              const { error: signOutError } = await supabase.auth.signOut();
+              if (signOutError) {
+                console.warn("⚠️ Supabase signOut warning:", signOutError);
+              } else {
+                console.log("✅ Supabase auth session cleared");
               }
-
-              // remove local session keys
-              await AsyncStorage.multiRemove(['userSession', 'nim', 'role']);
-
-              // navigate to auth login screen (replace so user cannot go back)
-              router.replace('/screens/Login');
-            } catch (err) {
-              console.error("Sign out failed:", err);
-              Alert.alert("Error", "Gagal keluar. Coba lagi.");
+            } catch (authError) {
+              console.warn("⚠️ Auth signOut error (non-fatal):", authError);
             }
-          },
+
+            // 2. Clear all local storage keys
+            try {
+              await AsyncStorage.multiRemove(['userSession', 'nim', 'role']);
+              console.log("✅ Local storage cleared");
+            } catch (storageError) {
+              console.warn("⚠️ Storage clear warning:", storageError);
+              // Continue anyway - not critical
+            }
+
+            // 3. Clear local state
+            setUserData(null);
+            setEditing(false);
+            setEditName("");
+            setEditNim("");
+            setEditPhotoUrl(null);
+
+            console.log("✅ Sign out completed, navigating to login...");
+
+            // 4. Navigate to login (replace stack so user can't go back)
+            try {
+              // use object-form route to match other usages
+              await router.replace({ pathname: '/screens/Login' });
+            } catch (rErr) {
+              console.warn('router.replace failed, fallback to push', rErr);
+              router.push({ pathname: "/screens/Login" });
+            }
+            return;
+ 
+          } catch (err) {
+            console.error(" Critical sign out error:", err);
+            Alert.alert(
+              "Error", 
+              "Terjadi kesalahan saat keluar. Silakan coba lagi atau restart aplikasi.",
+              [
+                {
+                  text: "Coba Lagi",
+                  onPress: () => handleSignOut()
+                },
+                {
+                  text: "OK",
+                  style: "cancel"
+                }
+              ]
+            );
+          }
         },
-      ],
-      { cancelable: true }
-    );
-  };
+      },
+    ],
+    { cancelable: true }
+  );
+};
+  // --> ADDED: centralized sign out handler
 
   if (loading) {
     return (
@@ -375,7 +420,7 @@ const Profile: React.FC = () => {
           </View>
 
           <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
-            <Text style={styles.signOutText}>Sign Out</Text>
+            <Text style={styles.signOutText}>Log Out</Text>
           </TouchableOpacity>
         </View>
 

@@ -345,26 +345,26 @@ const HomeDriver = () => {
           // ==================== TAMPILKAN PESANAN AKTIF ====================
           <View style={styles.ordersContainer}>
             
-            {/* 🚗 SCOOTRIDE SECTION */}
+            {/*  SCOOTRIDE SECTION */}
             <View style={styles.serviceSection}>
-              <Text style={styles.serviceSectionTitle}>🚗 ScootRide - Pesanan Aktif</Text>
+              <Text style={styles.serviceSectionTitle}> ScootRide - Pesanan Aktif</Text>
               {rideOrders && rideOrders.length > 0 ? (
                 rideOrders.map((r) => (
                   <View style={styles.orderCard} key={r.id_scoot_ride}>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>📍 Lokasi Jemput:</Text>
+                      <Text style={styles.orderLabel}> Lokasi Jemput:</Text>
                       <Text style={styles.orderValue}>{r.lokasi_jemput}</Text>
                     </View>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>📍 Lokasi Tujuan:</Text>
+                      <Text style={styles.orderLabel}> Lokasi Tujuan:</Text>
                       <Text style={styles.orderValue}>{r.lokasi_tujuan}</Text>
                     </View>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>💰 Tarif:</Text>
+                      <Text style={styles.orderLabel}> Tarif:</Text>
                       <Text style={styles.orderValue}>Rp {Number(r.tarif).toLocaleString('id-ID')}</Text>
                     </View>
                     <View style={[styles.orderRow, { borderBottomWidth: 0, marginBottom: 0 }]}>
-                      <Text style={styles.orderLabel}>📊 Status:</Text>
+                      <Text style={styles.orderLabel}> Status:</Text>
                       <Text style={[styles.orderValue, { color: '#FF9500', fontWeight: '700' }]}>{r.status}</Text>
                     </View>
                     <TouchableOpacity
@@ -386,6 +386,24 @@ const HomeDriver = () => {
                       <Text style={styles.chatButtonText}>Chat dengan Customer</Text>
                     </TouchableOpacity>
 
+                    {/* NEW: On Maps - Ride */}
+                    <TouchableOpacity
+                      style={[styles.chatButton, { backgroundColor: '#0b74ff', marginTop: 8 }]}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/screens/driverfix/ScootRideDriver/MapsRide',
+                          params: {
+                            orderId: r.id_scoot_ride.toString(),
+                            service: 'RIDE',
+                            ...userParams
+                          }
+                        })
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.chatButtonText}>On Maps</Text>
+                    </TouchableOpacity>
+                    
                     {/* On Maps button - Ride (changed to "selesai" -> PembayaranRIde) */}
                     <TouchableOpacity
                       style={[styles.chatButton, { backgroundColor: '#0ea5a4', marginTop: 8 }]}
@@ -436,8 +454,8 @@ const HomeDriver = () => {
                 ))
               ) : (
                  <View style={styles.emptyCard}>
-                   <Text style={styles.emptyEmoji}>📦</Text>
-                   <Text style={styles.emptyText}>null woi tabelnya</Text>
+                   <Text style={styles.emptyEmoji}></Text>
+                   <Text style={styles.emptyText}>menunggu customer memesan</Text>
                    <Text style={styles.emptySubtext}>Tidak ada pesanan ScootRide aktif</Text>
                  </View>
               )}
@@ -453,11 +471,11 @@ const HomeDriver = () => {
                 foodOrders.map((f) => (
                   <View style={styles.orderCard} key={f.id_scoot_food}>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>📍 Lokasi Resto:</Text>
+                      <Text style={styles.orderLabel}> Lokasi Resto:</Text>
                       <Text style={styles.orderValue}>{f.lokasi_resto}</Text>
                     </View>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>📍 Lokasi Tujuan:</Text>
+                      <Text style={styles.orderLabel}> Lokasi Tujuan:</Text>
                       <Text style={styles.orderValue}>{f.lokasi_tujuan}</Text>
                     </View>
                     <View style={styles.orderRow}>
@@ -489,6 +507,24 @@ const HomeDriver = () => {
                     >
                       <Text style={styles.chatButtonIcon}></Text>
                       <Text style={styles.chatButtonText}>Chat dengan Customer</Text>
+                    </TouchableOpacity>
+
+                    {/* NEW: On Maps - Food */}
+                    <TouchableOpacity
+                      style={[styles.chatButton, { backgroundColor: '#0b74ff', marginTop: 8 }]}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/screens/driverfix/ScootFoodDriver/MapsFood',
+                          params: {
+                            orderId: f.id_scoot_food.toString(),
+                            service: 'FOOD',
+                            ...userParams
+                          }
+                        })
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.chatButtonText}>On Maps</Text>
                     </TouchableOpacity>
 
                     {/* On Maps button - Food (changed to "selesai" -> PembayaranFood) */}
@@ -541,8 +577,8 @@ const HomeDriver = () => {
                 ))
               ) : (
                  <View style={styles.emptyCard}>
-                   <Text style={styles.emptyEmoji}>📦</Text>
-                   <Text style={styles.emptyText}>null woi tabelnya</Text>
+                   <Text style={styles.emptyEmoji}></Text>
+                   <Text style={styles.emptyText}>menunggu customer memesan</Text>
                    <Text style={styles.emptySubtext}>Tidak ada pesanan ScootFood aktif</Text>
                  </View>
               )}
@@ -551,38 +587,38 @@ const HomeDriver = () => {
             {/* SPASI */}
             <View style={styles.spacer} />
 
-            {/* 📦 SCOOTSEND SECTION */}
+            {/*  SCOOTSEND SECTION */}
             <View style={styles.serviceSection}>
-              <Text style={styles.serviceSectionTitle}>📦 ScootSend - Pesanan Aktif</Text>
+              <Text style={styles.serviceSectionTitle}> ScootSend - Pesanan Aktif</Text>
               {sendOrders && sendOrders.length > 0 ? (
                 sendOrders.map((s) => (
                   <View style={styles.orderCard} key={s.id_scoot_send}>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>📍 Lokasi Jemput Barang:</Text>
+                      <Text style={styles.orderLabel}> Lokasi Jemput Barang:</Text>
                       <Text style={styles.orderValue}>{s.lokasi_jemput_barang}</Text>
                     </View>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>📍 Lokasi Tujuan:</Text>
+                      <Text style={styles.orderLabel}> Lokasi Tujuan:</Text>
                       <Text style={styles.orderValue}>{s.lokasi_tujuan}</Text>
                     </View>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>👤 Nama Penerima:</Text>
+                      <Text style={styles.orderLabel}> Nama Penerima:</Text>
                       <Text style={styles.orderValue}>{s.nama_penerima}</Text>
                     </View>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>⚖️ Berat:</Text>
+                      <Text style={styles.orderLabel}> Berat:</Text>
                       <Text style={styles.orderValue}>{Number(s.berat).toFixed(2)} kg</Text>
                     </View>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>📦 Kategori Barang:</Text>
+                      <Text style={styles.orderLabel}> Kategori Barang:</Text>
                       <Text style={styles.orderValue}>{s.nama_barang}</Text>
                     </View>
                     <View style={styles.orderRow}>
-                      <Text style={styles.orderLabel}>💰 Tarif:</Text>
+                      <Text style={styles.orderLabel}> Tarif:</Text>
                       <Text style={styles.orderValue}>Rp {Number(s.tarif).toLocaleString('id-ID')}</Text>
                     </View>
                     <View style={[styles.orderRow, { borderBottomWidth: 0, marginBottom: 0 }]}>
-                      <Text style={styles.orderLabel}>📊 Status:</Text>
+                      <Text style={styles.orderLabel}> Status:</Text>
                       <Text style={[styles.orderValue, { color: '#FF9500', fontWeight: '700' }]}>{s.status}</Text>
                     </View>
                     <TouchableOpacity
@@ -602,6 +638,24 @@ const HomeDriver = () => {
                     >
                       <Text style={styles.chatButtonIcon}></Text>
                       <Text style={styles.chatButtonText}>Chat dengan Customer</Text>
+                    </TouchableOpacity>
+
+                    {/* NEW: On Maps - Send */}
+                    <TouchableOpacity
+                      style={[styles.chatButton, { backgroundColor: '#0b74ff', marginTop: 8 }]}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/screens/driverfix/ScootSendDriver/MapsSend',
+                          params: {
+                            orderId: s.id_scoot_send.toString(),
+                            service: 'SEND',
+                            ...userParams
+                          }
+                        })
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.chatButtonText}>On Maps</Text>
                     </TouchableOpacity>
 
                     {/* On Maps button - Send (changed to "selesai" -> PembayaranSend) */}
@@ -654,8 +708,8 @@ const HomeDriver = () => {
                 ))
               ) : (
                  <View style={styles.emptyCard}>
-                   <Text style={styles.emptyEmoji}>📦</Text>
-                   <Text style={styles.emptyText}>null woi tabelnya</Text>
+                   <Text style={styles.emptyEmoji}></Text>
+                   <Text style={styles.emptyText}>menunggu customer memesan</Text>
                    <Text style={styles.emptySubtext}>Tidak ada pesanan ScootSend aktif</Text>
                  </View>
               )}
@@ -680,7 +734,7 @@ const HomeDriver = () => {
                 <View style={styles.cardTextContainer}>
                   <Text style={styles.cardTitle}>ScootRide</Text>
                   <Text style={styles.cardDesc}>Nebeng cepat, aman, dan</Text>
-                  <Text style={styles.cardDesc}>santai 😎</Text>
+                  <Text style={styles.cardDesc}>santai </Text>
                 </View>
                 <View style={styles.arrowButton}>
                   <Text style={styles.arrowText}>→</Text>
@@ -699,7 +753,7 @@ const HomeDriver = () => {
                 <View style={styles.cardTextContainer}>
                   <Text style={styles.cardTitle}>ScootFood</Text>
                   <Text style={styles.cardDesc}>Antar makanan dengan</Text>
-                  <Text style={styles.cardDesc}>mudah 😋</Text>
+                  <Text style={styles.cardDesc}>mudah </Text>
                 </View>
                 <View style={styles.arrowButton}>
                   <Text style={styles.arrowText}>→</Text>
@@ -718,7 +772,7 @@ const HomeDriver = () => {
                 <View style={styles.cardTextContainer}>
                   <Text style={styles.cardTitle}>ScootSend</Text>
                   <Text style={styles.cardDesc}>Kirim paket cepat, aman dan</Text>
-                  <Text style={styles.cardDesc}>terpercaya 📦</Text>
+                  <Text style={styles.cardDesc}>terpercaya </Text>
                 </View>
                 <View style={styles.arrowButton}>
                   <Text style={styles.arrowText}>→</Text>
